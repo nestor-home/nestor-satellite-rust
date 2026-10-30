@@ -20,10 +20,14 @@ pin them to a full version, and commit `Cargo.lock`.
 
 ```text
 src/
-├── protocol.rs   values of nestor.satellite/1: Device, Sdk, Capability, Manifest, Behavior, Expression
+├── protocol.rs   values of nestor.satellite/2: Device, Sdk, Capability, Manifest, PairingMethod, Behavior…
 ├── wire.rs       the JSON envelope: messages the satellite sends, strict decoding of what the core sends
-├── pairing.rs    pair with a code, TokenStore (file mode 600, same format as the Python SDK)
-├── client.rs     Satellite: WebRTC connection, hello/welcome, acks, Observer, Backoff, reconnection
+├── codes.rs      enrollment codes (Crockford base32, normalised) and pairing URIs (nestor+http…)
+├── pairing.rs    the pairing flow (device code, enrollment codes, refusals, Retry-After), Display, Voice,
+│                 Enroller, TokenStore (file mode 600, same format as the Python SDK)
+├── i18n.rs       Language: what is said to people, from the Fluent catalogue i18n/{en,fr}.ftl
+├── client.rs     Satellite: builder (pairing methods derived from outputs), WebRTC connection,
+│                 hello/welcome, acks, Observer, Backoff, reconnection
 ├── dispatch.rs   Dispatcher: one data channel message → Body call + ack (transport-agnostic)
 ├── body.rs       Body: what a driver implements to carry out intents (no-op defaults)
 ├── audio.rs      AudioSource / AudioSink traits, SilenceSource / RecordingSink doubles
@@ -32,7 +36,7 @@ src/
 └── bin/nestor-satellite.rs   the CLI (feature `cli`)
 schemas/          JSON Schemas copied from the server (do not edit by hand)
 scripts/conformance.py        runs the server's conformance suite against the binary
-examples/led.rs   the README's driver, compiled by clippy
+examples/         the README's drivers (led.rs, screen.rs), compiled by clippy
 tests/            schemas, fake-core client tests, conformance
 ```
 
@@ -42,6 +46,7 @@ tests/            schemas, fake-core client tests, conformance
    repository is only used by tests, next to this one (`../nestor`, or `NESTOR_REPO`).
 2. **Refreshing the schemas.** `schemas/` is a copy of
    `../nestor/src/nestor/modules/satellites/schemas/`; `tests/schemas.rs` fails when they drift.
+   The standard itself is `../nestor/docs/satellite-protocol.md` (rules N1, P1-P8, I1-I3, W1-W4).
    To refresh: `cp ../nestor/src/nestor/modules/satellites/schemas/*.json schemas/`, then adapt
    `protocol.rs`/`wire.rs` until `cargo test` passes. Every message the SDK sends is validated
    against these schemas, and the decoder must refuse what they refuse.
@@ -50,17 +55,27 @@ tests/            schemas, fake-core client tests, conformance
 4. **The network loop never waits for the device.** `Body` methods return at once; a driver
    animates in its own task or thread. Physical safety lives in the driver, never in the link.
 5. **Secrets:** the token is written with mode 600, never logged, and forgotten when the core
-   refuses it (401).
+   refuses it (401). An enrollment code is never logged either (`EnrollmentCode`'s `Debug` hides
+   it); the device code is, always: it is how a headless device is paired.
 6. **WebRTC interop.** The core is aiortc (Pipecat SmallWebRTC). The offer is sent with
    `a=setup:active` (see `dtls_client` in `client.rs`): without it neither side opens SCTP and the
    data channel never comes up. Keep that test and the conformance run green.
+7. **Pairing never fails silently.** Every refusal is logged; a refused enrollment code is never
+   sent again; the device code takes over. Only `protocol_unsupported` and `invalid_request` stop
+   the satellite. A pairing method is declared only when the driver gave what carries it out.
+8. **People read sentences from the catalogue.** Anything shown, said or logged for people (codes,
+   refusals, hints, errors) goes through `Language::say`/`describe`: add the sentence to both
+   `src/i18n/en.ftl` and `fr.ftl` (a test checks they match), short, no em-dash. Logs for developers
+   stay in English in the code.
 
 ## Conformance
 
 The server's black-box suite (`nestor.adapters.channels.voice.satellites.conformance`) runs a fake
-core, launches the binary as a subprocess (robot-less speaker: `audio.capture` + `audio.playback`,
-`--null-audio`), approves the pairing and checks pairing, hello, acks, audio both ways and
-reconnection:
+core and launches the binary once per scenario (robot-less speaker: `audio.capture` +
+`audio.playback` + `device.identify`, `--null-audio`): `{url}` is the core, `{state}` a fresh folder
+for the token, and the enrollment code comes in `NESTOR_PAIRING_URI`. It checks pairing with a
+device code and with an enrollment code, refused codes, Retry-After, identify, hello, acks, audio
+both ways and reconnection:
 
 ```bash
 (cd ../nestor && uv sync --extra voice)
@@ -77,7 +92,7 @@ The test is skipped without the server's environment (`NESTOR_PYTHON` overrides 
 - Edition 2024, `rustfmt.toml` (width 120). English only. `unsafe` is forbidden; no `unwrap`,
   `expect` or `panic` in library code (clippy denies them; tests may).
 - Errors: `thiserror` (`Error`, `ProtocolError`, `AudioError`); logs: `tracing`, never `println!`
-  except `show_code` and the CLI.
+  except in the CLI and the examples.
 - Async: tokio; explicit timeouts (HTTP, ICE gathering, welcome); every task of a connection is
   aborted and the peer connection closed when it ends; `run_until` releases the audio devices.
 - Keep the repository lean: no Markdown beyond README.md and this file.
@@ -85,6 +100,7 @@ The test is skipped without the server's environment (`NESTOR_PYTHON` overrides 
 ## Tests
 
 - Test behaviour, not implementation: one behaviour per test, named as a sentence.
-- Hardware is replaced by doubles (`SilenceSource`, `RecordingSink`); the core by an axum fake
-  (`tests/client.rs`) or the server's own suite (`tests/conformance.rs`).
+- Hardware is replaced by doubles (`SilenceSource`, `RecordingSink`, a display/voice/body that
+  notes what it is asked); the core by an axum fake (`tests/client.rs`, `tests/schemas.rs`) or the
+  server's own suite (`tests/conformance.rs`).
 - A real microphone, speaker or Raspberry Pi is not exercised by the tests: say so when it matters.
