@@ -11,7 +11,7 @@
 //! 600), and forgotten when the core refuses it (revoked, or paired again elsewhere). The file
 //! format is the Python SDK's, so a device can switch SDKs without pairing again.
 
-use std::collections::{BTreeSet, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashSet};
 use std::fs;
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
@@ -32,8 +32,13 @@ use crate::codes::{Enrollment, EnrollmentCode};
 use crate::error::{Error, Result};
 use crate::i18n::{Language, digits};
 use crate::protocol::{EnrollmentMethod, Manifest, PairingMethod};
+use crate::speech::{self, SpokenCode};
 
-/// One device's token for one core, in a JSON file.
+/// One device's state for one core, in a JSON file: its token, and the enrollment codes the core
+/// refused (their SHA-256 only), so that a restarted device never sends them again.
+///
+/// `{"core": …, "device_id": …, "token": … (once paired), "refused": {"<sha256>": "<reason>"}}`,
+/// readable by its owner only.
 #[derive(Debug, Clone)]
 pub struct TokenStore {
     path: PathBuf,
@@ -43,7 +48,10 @@ pub struct TokenStore {
 struct Saved {
     core: String,
     device_id: String,
-    token: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    token: Option<String>,
+    #[serde(default)]
+    refused: BTreeMap<String, String>,
 }
 
 impl TokenStore {
@@ -65,27 +73,62 @@ impl TokenStore {
     /// The token of `device_id` for `core`, if one was saved (a token for another core or device
     /// is useless here).
     pub fn load(&self, core: &str, device_id: &str) -> Option<String> {
-        let saved: Saved = serde_json::from_slice(&fs::read(&self.path).ok()?).ok()?;
-        (saved.core == core && saved.device_id == device_id).then_some(saved.token)
+        self.read(core, device_id)?.token
     }
 
-    /// Keep the token, readable by its owner only.
+    /// Keep the token, readable by its owner only (the refused codes stay).
     pub fn save(&self, core: &str, device_id: &str, token: &str) -> io::Result<()> {
+        let mut saved = self.read_or_new(core, device_id);
+        saved.token = Some(token.to_owned());
+        self.write(&saved)
+    }
+
+    /// Forget the token (nothing to do when there is none). The refused codes stay.
+    pub fn forget(&self) -> io::Result<()> {
+        let saved = fs::read(&self.path).ok().and_then(|bytes| serde_json::from_slice::<Saved>(&bytes).ok());
+        match saved {
+            Some(saved) if !saved.refused.is_empty() => self.write(&Saved { token: None, ..saved }),
+            _ => match fs::remove_file(&self.path) {
+                Err(error) if error.kind() != io::ErrorKind::NotFound => Err(error),
+                _ => Ok(()),
+            },
+        }
+    }
+
+    /// Why `core` refused `code` for `device_id`, if it did.
+    pub fn refusal(&self, core: &str, device_id: &str, code: &EnrollmentCode) -> Option<String> {
+        self.read(core, device_id)?.refused.remove(&code.digest())
+    }
+
+    /// Keep that `core` refused `code` for `device_id`, and why: its SHA-256 only, never the code.
+    pub fn refuse(&self, core: &str, device_id: &str, code: &EnrollmentCode, reason: &str) -> io::Result<()> {
+        let mut saved = self.read_or_new(core, device_id);
+        saved.refused.insert(code.digest(), reason.to_owned());
+        self.write(&saved)
+    }
+
+    fn read(&self, core: &str, device_id: &str) -> Option<Saved> {
+        let saved: Saved = serde_json::from_slice(&fs::read(&self.path).ok()?).ok()?;
+        (saved.core == core && saved.device_id == device_id).then_some(saved)
+    }
+
+    /// What is kept for this core and device; a file for another one is replaced.
+    fn read_or_new(&self, core: &str, device_id: &str) -> Saved {
+        self.read(core, device_id).unwrap_or_else(|| Saved {
+            core: core.to_owned(),
+            device_id: device_id.to_owned(),
+            token: None,
+            refused: BTreeMap::new(),
+        })
+    }
+
+    fn write(&self, saved: &Saved) -> io::Result<()> {
         if let Some(parent) = self.path.parent().filter(|p| !p.as_os_str().is_empty()) {
             create_private_dir(parent)?;
         }
-        let saved = Saved { core: core.to_owned(), device_id: device_id.to_owned(), token: token.to_owned() };
         let mut file = open_private(&self.path)?;
-        file.write_all(&serde_json::to_vec(&saved)?)?;
+        file.write_all(&serde_json::to_vec(saved)?)?;
         restrict(&self.path) // an older file may have been more open
-    }
-
-    /// Forget the token (nothing to do when there is none).
-    pub fn forget(&self) -> io::Result<()> {
-        match fs::remove_file(&self.path) {
-            Err(error) if error.kind() != io::ErrorKind::NotFound => Err(error),
-            _ => Ok(()),
-        }
     }
 }
 
@@ -166,7 +209,7 @@ impl<F: Fn(&str) + Send + Sync + 'static> Voice for F {
 }
 
 /// Hands an enrollment code to the satellite while it waits to be paired: typed on its keypad
-/// ([`EnrollmentMethod::Input`]) or scanned from a QR code ([`EnrollmentMethod::Qr`]).
+/// ([`EnrollmentMethod::Input`]).
 ///
 /// Get one with [`Satellite::enroller`](crate::Satellite::enroller), before running the satellite;
 /// declare how codes are handed in with
@@ -218,11 +261,14 @@ pub(crate) struct Handed {
     pub(crate) method: EnrollmentMethod,
 }
 
-/// Presents what pairing has to say to people: on the display, by the voice, always in the log.
+/// Presents what pairing has to say to people: on the display, by the voice (the driver's, else the
+/// bundled clips through the speaker), always in the log.
 #[derive(Clone)]
 pub(crate) struct Presenter {
     pub(crate) display: Option<Arc<dyn Display>>,
     pub(crate) voice: Option<Arc<dyn Voice>>,
+    /// The device code said with the bundled clips, for a speaker without a voice of its own.
+    pub(crate) speech: Option<Arc<SpokenCode>>,
     pub(crate) language: Language,
 }
 
@@ -234,9 +280,11 @@ impl Presenter {
             display.show_code(&text, code);
         }
         if let Some(voice) = &self.voice {
-            voice.say(&self.language.say("pairing-code-spoken", &[("digits", FluentValue::from(digits(code)))]));
+            voice.say(&self.language.say(speech::MESSAGE, &[("digits", FluentValue::from(digits(code)))]));
+        } else if let Some(speech) = &self.speech {
+            speech.say(code);
         }
-        if self.display.is_none() && self.voice.is_none() {
+        if self.display.is_none() && self.voice.is_none() && self.speech.is_none() {
             info!("{}", self.language.say("pairing-headless", &[]));
         }
     }
@@ -272,6 +320,13 @@ impl Presenter {
             display.clear();
         }
     }
+
+    /// Pairing is over: stop saying the code.
+    async fn hush(&self) {
+        if let Some(speech) = &self.speech {
+            speech.hush().await;
+        }
+    }
 }
 
 /// One pairing, from the first request to the token.
@@ -279,12 +334,14 @@ pub(crate) struct Pairing<'a> {
     pub(crate) http: &'a Client,
     pub(crate) core: &'a str,
     pub(crate) manifest: &'a Manifest,
+    /// Where refused enrollment codes are kept across restarts.
+    pub(crate) tokens: &'a TokenStore,
     pub(crate) body: &'a dyn Body,
     pub(crate) presenter: &'a Presenter,
     pub(crate) poll: Duration,
     /// The configured enrollment code: forgotten once spent or refused.
     pub(crate) configured: &'a Mutex<Option<Handed>>,
-    /// Enrollment codes refused so far: never presented again.
+    /// Enrollment codes refused while running (also kept in `tokens`): never presented again.
     pub(crate) refused: &'a Mutex<HashSet<EnrollmentCode>>,
     pub(crate) slot: &'a Mutex<Option<mpsc::UnboundedSender<Handed>>>,
 }
@@ -299,6 +356,7 @@ impl Pairing<'_> {
         set(self.slot, Some(sender));
         let _open = Open(self.slot); // closed however this ends, cancelled included
         let outcome = self.pair(&mut inbox).await;
+        self.presenter.hush().await; // approved, failed or cancelled: the code is no longer said
         match &outcome {
             Ok(_) => self.presenter.paired(),
             Err(error @ (Error::ProtocolUnsupported(_) | Error::PairingRefused(_))) => self.presenter.failed(error),
@@ -315,7 +373,7 @@ impl Pairing<'_> {
                 .take()
                 .or_else(|| inbox.try_recv().ok())
                 .or_else(|| self.configured.lock().ok().and_then(|c| c.clone()))
-                .filter(|handed| !self.was_refused(&handed.code));
+                .filter(|handed| !self.skip_refused(handed));
             let response = self.request(proof.as_ref()).await?;
             let ticket: Ticket = match response {
                 Answer::Ok(value) => serde_json::from_value(value)?,
@@ -445,6 +503,10 @@ impl Pairing<'_> {
         if let Ok(mut refused) = self.refused.lock() {
             refused.insert(handed.code.clone());
         }
+        let device = self.manifest.device().id();
+        if let Err(error) = self.tokens.refuse(self.core, device, &handed.code, reason) {
+            warn!(%error, path = %self.tokens.path().display(), "the refused enrollment code could not be kept");
+        }
         if self.configured.lock().is_ok_and(|c| c.as_ref().is_some_and(|c| c.code == handed.code)) {
             self.forget_configured();
         }
@@ -453,6 +515,20 @@ impl Pairing<'_> {
 
     fn was_refused(&self, code: &EnrollmentCode) -> bool {
         self.refused.lock().is_ok_and(|refused| refused.contains(code))
+            || self.tokens.refusal(self.core, self.manifest.device().id(), code).is_some()
+    }
+
+    /// Whether `handed` was refused before (in an earlier run too): then it is said, and forgotten
+    /// if it is the configured code.
+    fn skip_refused(&self, handed: &Handed) -> bool {
+        if !self.was_refused(&handed.code) {
+            return false;
+        }
+        warn!("{}", self.presenter.language.say("pairing-already-refused", &[]));
+        if self.configured.lock().is_ok_and(|c| c.as_ref().is_some_and(|c| c.code == handed.code)) {
+            self.forget_configured();
+        }
+        true
     }
 
     fn forget_configured(&self) {
@@ -584,7 +660,7 @@ mod tests {
 
     fn presenter(display: bool, language: Language) -> Presenter {
         let display: Option<Arc<dyn Display>> = display.then(|| Arc::new(|_: &str, _: &str| {}) as Arc<dyn Display>);
-        Presenter { display, voice: None, language }
+        Presenter { display, voice: None, speech: None, language }
     }
 
     #[test]
@@ -615,6 +691,24 @@ mod tests {
         store.forget().unwrap();
         store.forget().unwrap();
         assert_eq!(store.load("http://core", "a"), None);
+    }
+
+    #[test]
+    fn refused_codes_are_kept_as_digests_for_their_core_and_device_and_outlive_the_token() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = TokenStore::new(dir.path().join("state.json"));
+        let code = EnrollmentCode::parse("K7QF-2M9X").unwrap();
+        store.refuse("http://core", "a", &code, "used").unwrap();
+        assert_eq!(store.load("http://core", "a"), None, "no token until paired");
+        store.save("http://core", "a", "nst2_secret").unwrap();
+        store.forget().unwrap();
+        assert_eq!(store.load("http://core", "a"), None);
+        assert_eq!(store.refusal("http://core", "a", &code).as_deref(), Some("used"));
+        assert_eq!(store.refusal("http://other", "a", &code), None);
+        let other = EnrollmentCode::parse("ABCD-EFGH").unwrap();
+        assert_eq!(store.refusal("http://core", "a", &other), None);
+        let file = fs::read_to_string(store.path()).unwrap();
+        assert!(!file.contains("K7QF2M9X") && file.contains(&code.digest()), "{file}");
     }
 
     #[cfg(unix)]

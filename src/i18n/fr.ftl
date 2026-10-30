@@ -1,7 +1,9 @@
 # Ce qu'un satellite dit aux gens, en français. Phrases courtes, sans tiret cadratin.
 
 pairing-code-shown = Pour appairer cet appareil, saisissez ce code dans Nestor :
-pairing-code-spoken = Mon code d'appairage est { $digits }. Je répète : { $digits }.
+# Dit à voix haute, chiffre par chiffre. La voix fournie joue un extrait enregistré pour chaque texte entre
+# les chiffres (voice/, enregistré par scripts/voice.py de nestor-satellite-python) : le réenregistrer après une modification.
+pairing-code-spoken = Code d'appairage : { $digits }. Je répète : { $digits }.
 pairing-headless = Cet appareil n'a ni écran ni voix : pour l'appairer, créez un code d'enrôlement dans Nestor et renseignez NESTOR_PAIRING_URI.
 pairing-paired = Appairé avec Nestor.
 pairing-expired = Le code d'appairage a expiré. En voici un nouveau.

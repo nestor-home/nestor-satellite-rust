@@ -4,8 +4,9 @@
 //!     NESTOR_PAIRING_URI=nestor+http://nestor.local:7860/?code=K7QF2M9X nestor-satellite run --room salon
 //!
 //! Useful on a Raspberry Pi with a USB speakerphone. The first run pairs with the enrollment code
-//! it is given (`--pairing-uri`, `--pairing-code`, or their environment variables), else logs a
-//! device code to type in Nestor; the token is then kept in `~/.config/nestor-satellite/<id>.json`.
+//! it is given (`--pairing-uri`, `--pairing-code`, or their environment variables), else says a
+//! device code through the speaker and logs it, to type in Nestor; the token (and the enrollment
+//! codes refused, as digests) is then kept in `~/.config/nestor-satellite/<id>.json`.
 
 use std::path::PathBuf;
 use std::process::ExitCode;
@@ -126,7 +127,8 @@ fn satellite(run: Run, language: Language) -> Result<Satellite, String> {
     if let Some(brand) = run.brand {
         device = device.with_brand(brand).map_err(|e| e.to_string())?;
     }
-    // No screen and no voice of its own: it pairs with an enrollment code, or a device code read in its log.
+    // No screen: it pairs with an enrollment code, or a device code said through the speaker (bundled
+    // clips; not with --null-audio) and read in its log.
     let manifest = Manifest::new(device, [AUDIO_CAPTURE, AUDIO_PLAYBACK, IDENTIFY]).map_err(|e| e.to_string())?;
     let tokens = match run.token_file {
         Some(path) => TokenStore::new(path),

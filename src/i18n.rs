@@ -158,7 +158,7 @@ mod tests {
         let spoken = [("digits", FluentValue::from(digits("042917")))];
         assert_eq!(
             Language::Fr.say("pairing-code-spoken", &spoken),
-            "Mon code d'appairage est 0, 4, 2, 9, 1, 7. Je répète : 0, 4, 2, 9, 1, 7."
+            "Code d'appairage : 0, 4, 2, 9, 1, 7. Je répète : 0, 4, 2, 9, 1, 7."
         );
         let wait = [("seconds", FluentValue::from(2.0))];
         assert_eq!(Language::En.say("pairing-rate-limited", &wait), "Too many wrong codes. Trying again in 2 s.");

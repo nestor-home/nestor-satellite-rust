@@ -25,6 +25,7 @@ pub mod i18n;
 mod media;
 pub mod pairing;
 pub mod protocol;
+mod speech;
 pub mod wire;
 
 pub use audio::{AudioError, AudioSink, AudioSource, RecordingSink, SilenceSource};

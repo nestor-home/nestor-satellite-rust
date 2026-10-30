@@ -15,7 +15,7 @@ use axum::routing::{get, post};
 use axum::{Json, Router};
 use nestor_satellite::{
     AUDIO_CAPTURE, AUDIO_PLAYBACK, AudioError, AudioSource, Body, Device, Display, Enrollment, EnrollmentMethod, Error,
-    IDENTIFY, Language, Manifest, Satellite, SatelliteBuilder, SilenceSource, TokenStore, Voice,
+    IDENTIFY, Language, Manifest, RecordingSink, Satellite, SatelliteBuilder, SilenceSource, TokenStore, Voice,
 };
 use serde_json::{Value, json};
 
@@ -238,7 +238,7 @@ async fn the_device_code_is_shown_and_said_twice_digit_by_digit_until_it_is_type
         outputs.noted(),
         [
             "show To pair this device, type this code in Nestor: 000001",
-            "say My pairing code is 0, 0, 0, 0, 0, 1. Once more: 0, 0, 0, 0, 0, 1.",
+            "say Pairing code: 0, 0, 0, 0, 0, 1. I repeat: 0, 0, 0, 0, 0, 1.",
             "clear",
         ]
     );
@@ -350,13 +350,13 @@ async fn when_the_device_code_won_the_race_the_token_still_comes() {
     let (_dir, tokens) = tokens();
     let outputs = Outputs::default();
     let satellite =
-        builder(&url, &tokens).display(outputs.clone()).accepts_enrollment(EnrollmentMethod::Qr).build().unwrap();
+        builder(&url, &tokens).display(outputs.clone()).accepts_enrollment(EnrollmentMethod::Input).build().unwrap();
     let enroller = satellite.enroller();
     let scanning = async {
         wait_for(|| outputs.count("show") == 1).await;
-        enroller.enroll("nestor+http://127.0.0.1:1/?code=K7QF2M9X", EnrollmentMethod::Qr).unwrap_err();
+        enroller.enroll("nestor+http://127.0.0.1:1/?code=K7QF2M9X", EnrollmentMethod::Input).unwrap_err();
         let uri = format!("{}/?code=K7QF2M9X", url.replace("http://", "nestor+http://"));
-        enroller.enroll(&uri, EnrollmentMethod::Qr).unwrap();
+        enroller.enroll(&uri, EnrollmentMethod::Input).unwrap();
         wait_for(|| !core.offers().is_empty()).await;
     };
     satellite.run_until(scanning).await.unwrap();
@@ -406,9 +406,82 @@ async fn a_code_refused_while_pending_is_said_and_the_device_code_presented_agai
         outputs.noted()[1..3],
         [
             "say This enrollment code has expired. Use the device code instead.",
-            "say My pairing code is 0, 0, 0, 0, 0, 1. Once more: 0, 0, 0, 0, 0, 1.",
+            "say Pairing code: 0, 0, 0, 0, 0, 1. I repeat: 0, 0, 0, 0, 0, 1.",
         ]
     );
+}
+
+#[tokio::test]
+async fn a_refused_enrollment_code_is_kept_and_never_sent_again_after_a_restart() {
+    let (url, core) = FakeCore { codes: Codes::Refuse, ..Default::default() }.serve().await;
+    let (_dir, tokens) = tokens();
+    let first = builder(&url, &tokens).enrollment(code()).build().unwrap();
+    first.run_until(wait_for(|| !core.offers().is_empty())).await.unwrap();
+    assert_eq!(core.coded_requests(), 1);
+
+    let file = std::fs::read_to_string(tokens.path()).unwrap();
+    assert!(!file.contains("K7QF2M9X") && !file.contains("K7QF-2M9X"), "never in clear: {file}");
+    let saved: Value = serde_json::from_str(&file).unwrap();
+    assert_eq!(saved["refused"], json!({code().code().digest(): "used"}));
+    tokens.forget().unwrap(); // the core revoked the token: the refused codes stay
+    assert_eq!(tokens.load(&url, "enceinte-salon"), None);
+
+    let restarted = builder(&url, &tokens).enrollment(code()).build().unwrap();
+    restarted.run_until(wait_for(|| core.offers().iter().any(|t| t == "nst2_p3"))).await.unwrap();
+    assert_eq!(core.coded_requests(), 1, "the same code, configured again, is not sent again");
+    assert_eq!(core.requests().len(), 3, "the restarted device asked for a device code at once");
+}
+
+#[tokio::test]
+async fn a_speaker_without_a_screen_says_its_code_with_the_bundled_voice_and_stops_once_paired() {
+    let (url, core) = FakeCore { pending: 20, ..Default::default() }.serve().await;
+    let (_dir, tokens) = tokens();
+    let speaker = RecordingSink::new();
+    let satellite = builder(&url, &tokens).sink(speaker.clone()).build().unwrap();
+    assert_eq!(
+        satellite.manifest().to_json()["pairing_methods"],
+        json!(["device_code.speech", "enrollment.provisioning"])
+    );
+    let said = Mutex::new(0);
+    let pairing = async {
+        wait_for(|| tokens.load(&url, "enceinte-salon").is_some()).await; // mid-announcement
+        *said.lock().unwrap() = speaker.played().len();
+        tokio::time::sleep(Duration::from_millis(500)).await;
+    };
+    satellite.run_until(pairing).await.unwrap();
+    let said = *said.lock().unwrap();
+    assert!(said >= 48_000 / 10, "at least 0.1 s said: {said} samples");
+    assert!(said < 48_000 * 6, "approved before the end of the announcement: {said} samples");
+    assert_eq!(speaker.played().len(), said, "nothing said once paired");
+    assert!(!core.offers().is_empty());
+}
+
+#[tokio::test]
+async fn a_driver_s_voice_replaces_the_bundled_one() {
+    let (url, core) = FakeCore { pending: 3, ..Default::default() }.serve().await;
+    let (_dir, tokens) = tokens();
+    let speaker = RecordingSink::new();
+    let outputs = Outputs::default();
+    let satellite =
+        builder(&url, &tokens).language(Language::Fr).sink(speaker.clone()).voice(outputs.clone()).build().unwrap();
+    satellite.run_until(wait_for(|| !core.offers().is_empty())).await.unwrap();
+    assert_eq!(outputs.noted(), ["say Code d'appairage : 0, 0, 0, 0, 0, 1. Je répète : 0, 0, 0, 0, 0, 1."]);
+    assert!(speaker.played().is_empty());
+}
+
+#[tokio::test]
+async fn the_bundled_voice_is_declared_only_for_a_speaker_without_a_screen() {
+    let (_dir, tokens) = tokens();
+    let methods = |satellite: Satellite| satellite.manifest().to_json()["pairing_methods"].clone();
+    let url = "http://127.0.0.1:9";
+    let no_speaker = builder(url, &tokens).build().unwrap();
+    assert_eq!(methods(no_speaker), json!(["enrollment.provisioning"]), "no sink: nothing to speak with");
+    let with_screen = builder(url, &tokens).sink(RecordingSink::new()).display(Outputs::default()).build().unwrap();
+    assert_eq!(methods(with_screen), json!(["device_code.display", "enrollment.provisioning"]));
+    let device = Device::new("capteur-entree", "esp32", "entree").unwrap();
+    let silent = Manifest::new(device, [AUDIO_CAPTURE]).unwrap();
+    let undeclared = Satellite::builder(url, silent, tokens.clone()).sink(RecordingSink::new()).build().unwrap();
+    assert_eq!(methods(undeclared), json!(["enrollment.provisioning"]), "audio.playback is not declared");
 }
 
 #[tokio::test]

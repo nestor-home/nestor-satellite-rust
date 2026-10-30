@@ -137,20 +137,14 @@ pub enum PairingMethod {
     /// environment, file). Every device supports it.
     #[serde(rename = "enrollment.provisioning")]
     EnrollmentProvisioning,
-    /// The person shows the pairing URI's QR code to the device's camera.
-    #[serde(rename = "enrollment.qr")]
-    EnrollmentQr,
 }
 
 impl PairingMethod {
-    /// Every method, in the schema's order.
-    pub const ALL: [Self; 5] = [
-        Self::DeviceCodeDisplay,
-        Self::DeviceCodeSpeech,
-        Self::EnrollmentInput,
-        Self::EnrollmentProvisioning,
-        Self::EnrollmentQr,
-    ];
+    /// Every method this SDK can declare, in the schema's order. The protocol's `enrollment.qr`
+    /// (scanning the pairing URI's QR code) needs a camera, which this SDK does not drive: it is
+    /// not one of them.
+    pub const ALL: [Self; 4] =
+        [Self::DeviceCodeDisplay, Self::DeviceCodeSpeech, Self::EnrollmentInput, Self::EnrollmentProvisioning];
 
     /// The wire name (`"device_code.display"`).
     pub fn as_str(self) -> &'static str {
@@ -159,7 +153,6 @@ impl PairingMethod {
             Self::DeviceCodeSpeech => "device_code.speech",
             Self::EnrollmentInput => "enrollment.input",
             Self::EnrollmentProvisioning => "enrollment.provisioning",
-            Self::EnrollmentQr => "enrollment.qr",
         }
     }
 }
@@ -170,7 +163,8 @@ impl fmt::Display for PairingMethod {
     }
 }
 
-/// How the device received an enrollment code: the pairing methods whose proof is an enrollment code.
+/// How the device received an enrollment code: the pairing methods whose proof is an enrollment code
+/// that this SDK carries out (not `enrollment.qr`: it drives no camera).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 pub enum EnrollmentMethod {
     /// Typed on the device.
@@ -179,9 +173,6 @@ pub enum EnrollmentMethod {
     /// Set in its configuration (flag, environment, file).
     #[serde(rename = "enrollment.provisioning")]
     Provisioning,
-    /// Scanned from the pairing URI's QR code.
-    #[serde(rename = "enrollment.qr")]
-    Qr,
 }
 
 impl From<EnrollmentMethod> for PairingMethod {
@@ -189,7 +180,6 @@ impl From<EnrollmentMethod> for PairingMethod {
         match method {
             EnrollmentMethod::Input => Self::EnrollmentInput,
             EnrollmentMethod::Provisioning => Self::EnrollmentProvisioning,
-            EnrollmentMethod::Qr => Self::EnrollmentQr,
         }
     }
 }
@@ -551,9 +541,9 @@ mod tests {
             manifest.to_json()["pairing_methods"],
             json!(["device_code.display", "device_code.speech", "enrollment.provisioning"])
         );
-        assert!(manifest.supports(DeviceCodeSpeech) && !manifest.supports(EnrollmentQr));
+        assert!(manifest.supports(DeviceCodeSpeech) && !manifest.supports(EnrollmentInput));
         let names: Vec<&str> = PairingMethod::ALL.iter().map(|m| m.as_str()).collect();
         assert_eq!(serde_json::to_value(PairingMethod::ALL).unwrap(), json!(names));
-        assert_eq!(PairingMethod::from(EnrollmentMethod::Qr), EnrollmentQr);
+        assert_eq!(PairingMethod::from(EnrollmentMethod::Input), EnrollmentInput);
     }
 }

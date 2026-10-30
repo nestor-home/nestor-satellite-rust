@@ -12,7 +12,8 @@ cargo test --all-features
 ```
 
 All three must pass; CI runs them on stable Rust, checks the MSRV (1.91: webrtc-rs needs it) and
-runs `cargo audit`. Building needs a C compiler and `cmake` (libopus is bundled), and on Linux ALSA
+runs `cargo audit` (also weekly; clean as of 31/10/2026, no ignored advisory: an advisory that cannot
+be fixed goes in `.cargo/audit.toml` with its reason). Building needs a C compiler and `cmake` (libopus is bundled), and on Linux ALSA
 headers for the `audio` feature (`libasound2-dev pkg-config`). Add dependencies with `cargo add`,
 pin them to a full version, and commit `Cargo.lock`.
 
@@ -26,6 +27,7 @@ src/
 ├── pairing.rs    the pairing flow (device code, enrollment codes, refusals, Retry-After), Display, Voice,
 │                 Enroller, TokenStore (file mode 600, same format as the Python SDK)
 ├── i18n.rs       Language: what is said to people, from the Fluent catalogue i18n/{en,fr}.ftl
+├── speech.rs     the device code said through the sink with the bundled clips (voice/), cancellable
 ├── client.rs     Satellite: builder (pairing methods derived from outputs), WebRTC connection,
 │                 hello/welcome, acks, Observer, Backoff, reconnection
 ├── dispatch.rs   Dispatcher: one data channel message → Body call + ack (transport-agnostic)
@@ -35,9 +37,10 @@ src/
 ├── devices.rs    Microphone / Speaker through cpal (feature `audio`)
 └── bin/nestor-satellite.rs   the CLI (feature `cli`)
 schemas/          JSON Schemas copied from the server (do not edit by hand)
+voice/            recorded clips of the spoken device code, copied from nestor-satellite-python
 scripts/conformance.py        runs the server's conformance suite against the binary
 examples/         the README's drivers (led.rs, screen.rs), compiled by clippy
-tests/            schemas, fake-core client tests, conformance
+tests/            schemas, fake-core client tests, conformance, voice drift
 ```
 
 ## Rules
@@ -67,6 +70,18 @@ tests/            schemas, fake-core client tests, conformance
    refusals, hints, errors) goes through `Language::say`/`describe`: add the sentence to both
    `src/i18n/en.ftl` and `fr.ftl` (a test checks they match), short, no em-dash. Logs for developers
    stay in English in the code.
+
+9. **The bundled voice is the Python SDK's.** `voice/` is a byte-identical copy of
+   `../nestor-satellite-python/src/nestor_satellite/voice/` (recorded by its `scripts/voice.py`,
+   CC BY 4.0); `tests/voice.rs` fails when they drift (`NESTOR_VOICE=required` in CI). Each piece of
+   `pairing-code-spoken` between the digits has a clip: change that sentence only with new clips,
+   then `cp -R ../nestor-satellite-python/src/nestor_satellite/voice/* voice/` and list new files in
+   `speech.rs`. It is declared (`device_code.speech`) only for a sink given, `audio.playback`
+   declared, and no display nor driver `Voice`; it stops when pairing ends, however it ends.
+10. **Refused enrollment codes outlive the process.** The `TokenStore` file keeps their SHA-256
+   (`refused`), even when the token is forgotten; a code is never written or logged in clear.
+11. **No QR code.** This SDK drives no camera: `enrollment.qr` is not a `PairingMethod` here, so no
+   path declares it.
 
 ## Conformance
 

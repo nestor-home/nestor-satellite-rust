@@ -1,7 +1,9 @@
 # What a satellite says to people, in English. Short sentences, no em-dash.
 
 pairing-code-shown = To pair this device, type this code in Nestor:
-pairing-code-spoken = My pairing code is { $digits }. Once more: { $digits }.
+# Said aloud, digits one by one. The bundled voice plays a recorded clip for each piece of text between
+# the digits (voice/, recorded by nestor-satellite-python's scripts/voice.py): record them again after a change.
+pairing-code-spoken = Pairing code: { $digits }. I repeat: { $digits }.
 pairing-headless = This device has no screen and no voice: to pair it, create an enrollment code in Nestor and set NESTOR_PAIRING_URI.
 pairing-paired = Paired with Nestor.
 pairing-expired = The pairing code expired. Here is a new one.

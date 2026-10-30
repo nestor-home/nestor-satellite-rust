@@ -2,7 +2,7 @@
 //!
 //! An [`AudioSource`] gives the audio to send to the core (the microphone); an [`AudioSink`] plays
 //! what the core says (the speaker). Both work at one of the rates Opus encodes natively (8, 12,
-//! 16, 24 or 48 kHz), so the SDK never resamples. `nestor_satellite::devices` (feature `audio`)
+//! 16, 24 or 48 kHz), so the link never resamples. `nestor_satellite::devices` (feature `audio`)
 //! implements both with cpal; the doubles here serve tests and devices without one or the other.
 
 use std::sync::{Arc, Mutex};

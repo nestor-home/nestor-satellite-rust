@@ -1,0 +1,11 @@
+The clips in this folder say a satellite's pairing code. They were recorded by scripts/voice.py in
+nestor-satellite-python with Kokoro-82M v1.0 (https://huggingface.co/hexgrad/Kokoro-82M, Apache-2.0
+weights, trained on permissive or non-copyrighted audio), run by kokoro-onnx 0.6.1 (MIT):
+
+- en: voice af_heart;
+- fr: voice ff_siwis, trained on the SIWIS French Speech Synthesis Database
+  (https://datashare.ed.ac.uk/handle/10283/2353), CC BY 4.0.
+
+The clips are shared under the Creative Commons Attribution 4.0 International licence
+(https://creativecommons.org/licenses/by/4.0/). Attribution: "Voice: Kokoro-82M (hexgrad),
+French voice trained on the SIWIS French Speech Synthesis Database (Honnet et al., 2017)."

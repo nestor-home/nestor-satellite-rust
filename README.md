@@ -40,19 +40,21 @@ A person proves they mean to pair the device, one of two ways; the first proof a
   (`nestor+http://nestor.local:7860/?code=K7QF2M9X`) or a code alone (`K7QF-2M9X`). Configured with
   `.enrollment(Enrollment::parse(…)?)`, or in `NESTOR_PAIRING_URI` (`NESTOR_PAIRING_CODE` with the
   core's address given separately), it is sent with the first request and the device is paired at
-  once (`enrollment.provisioning`, always declared). While the device waits, a code typed on it or
-  scanned from a QR code is handed in with an `Enroller` (`enrollment.input`, `enrollment.qr`,
-  declared with `.accepts_enrollment(…)`);
+  once (`enrollment.provisioning`, always declared). While the device waits, a code typed on it is
+  handed in with an `Enroller` (`enrollment.input`, declared with `.accepts_enrollment(…)`). This SDK
+  drives no camera: `enrollment.qr` is never declared;
 - **a device code**, six digits the device presents and the person types in the admin: on a
-  `Display` (`device_code.display`), with a `Voice` (`device_code.speech`, digits one by one, said
-  twice), and always in the log. A device with neither says in its log that an enrollment code is
-  the way to pair it.
+  `Display` (`device_code.display`), aloud (`device_code.speech`, digits one by one, said twice),
+  and always in the log. A speaker without a screen (`audio.playback` declared, a sink given) says
+  it by itself, offline, with recorded clips in English or French (`voice/`, the same as the other
+  SDKs', CC BY 4.0: see `voice/LICENSE`); a `Voice` of the driver's replaces them. A device with
+  neither screen nor voice says in its log that an enrollment code is the way to pair it.
 
-A refused enrollment code is said once (log, display, voice) and never sent again; the device code
-takes over. Messages to people are in English or French (`.language(…)`, else `LANG`). A body that
+A refused enrollment code is said once (log, display, voice) and never sent again, even after a
+restart: the `TokenStore` keeps its SHA-256 (never the code). The device code takes over. Messages to people are in English or French (`.language(…)`, else `LANG`). A body that
 can make the device noticed (`Body::identify`, capability `device.identify`) helps a person tell
 devices apart. The token is kept in the `TokenStore` (mode 600) and forgotten if the core refuses
-it.
+it; the refused codes stay.
 
 A screen that shows its code and takes codes typed on its keypad:
 
@@ -105,8 +107,8 @@ NESTOR_PAIRING_URI='nestor+http://nestor.local:7860/?code=K7QF2M9X' nestor-satel
 nestor-satellite run --room salon --pairing-uri 'nestor+http://nestor.local:7860/?code=K7QF2M9X'
 ```
 
-Without a code, `nestor-satellite run --core http://nestor.local:7860 --room salon` logs a device
-code to type in the admin. `--language fr` speaks French.
+Without a code, `nestor-satellite run --core http://nestor.local:7860 --room salon` says a device
+code through the speaker and logs it, to type in the admin. `--language fr` speaks French.
 
 Building needs Rust 1.91+, a C compiler and `cmake` (libopus is built from source); on Linux the
 `audio` feature also needs ALSA (`apt install libasound2-dev pkg-config`).

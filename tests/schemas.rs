@@ -91,8 +91,18 @@ fn the_sdk_knows_every_value_the_core_may_send() {
         to_satellite,
         [wire::INTENT_BEAT, wire::INTENT_BEHAVIOR, wire::INTENT_EXPRESSION, wire::INTENT_IDENTIFY, wire::WELCOME]
     );
-    let methods: Vec<&str> = PairingMethod::ALL.iter().map(|m| m.as_str()).collect();
-    assert_eq!(schemas["manifest.json"]["properties"]["pairing_methods"]["items"]["enum"], json!(methods));
+}
+
+#[test]
+fn every_pairing_method_but_the_qr_code_can_be_declared_and_the_qr_code_never() {
+    let schemas = vendored();
+    let protocol = &schemas["manifest.json"]["properties"]["pairing_methods"]["items"]["enum"];
+    let mut declarable: Vec<&str> = PairingMethod::ALL.iter().map(|m| m.as_str()).collect();
+    declarable.insert(4, "enrollment.qr"); // needs a camera: this SDK drives none
+    assert_eq!(protocol, &json!(declarable), "the SDK follows the protocol's methods");
+    let qr = json!("enrollment.qr");
+    assert!(serde_json::from_value::<PairingMethod>(qr.clone()).is_err(), "not a method of this SDK");
+    assert!(serde_json::from_value::<EnrollmentMethod>(qr).is_err(), "no way to hand in a scanned code");
 }
 
 #[test]
@@ -216,10 +226,11 @@ async fn the_pairing_bodies_the_sdk_sends_follow_the_schemas() {
     let dir = tempfile::tempdir().unwrap();
     let device = Device::new("enceinte-salon", "raspberry-pi-4", "salon").unwrap();
     let manifest = Manifest::new(device, [AUDIO_CAPTURE, IDENTIFY]).unwrap();
-    let satellite = Satellite::builder(&url, manifest, TokenStore::new(dir.path().join("t.json")))
+    let tokens = TokenStore::new(dir.path().join("t.json"));
+    let satellite = Satellite::builder(&url, manifest, tokens.clone())
         .language(Language::En)
         .enrollment(Enrollment::parse("K7QF-2M9X").unwrap())
-        .accepts_enrollment(EnrollmentMethod::Qr)
+        .accepts_enrollment(EnrollmentMethod::Input)
         .voice(|_: &str| {})
         .poll_interval(Duration::from_millis(10))
         .build()
@@ -229,8 +240,8 @@ async fn the_pairing_bodies_the_sdk_sends_follow_the_schemas() {
         while core.requests.lock().unwrap().len() < 2 || !enroller.is_pairing() {
             tokio::time::sleep(Duration::from_millis(10)).await;
         }
-        enroller.enroll("ABCD-EFGH", EnrollmentMethod::Qr).unwrap();
-        while dir.path().join("t.json").metadata().is_err() {
+        enroller.enroll("ABCD-EFGH", EnrollmentMethod::Input).unwrap();
+        while tokens.load(&url, "enceinte-salon").is_none() {
             tokio::time::sleep(Duration::from_millis(10)).await;
         }
     };
@@ -250,7 +261,7 @@ async fn the_pairing_bodies_the_sdk_sends_follow_the_schemas() {
             "{body}"
         );
     }
-    assert_eq!(enrollments[0], json!({"enrollment_code": "ABCDEFGH", "method": "enrollment.qr"}));
+    assert_eq!(enrollments[0], json!({"enrollment_code": "ABCDEFGH", "method": "enrollment.input"}));
 }
 
 #[test]

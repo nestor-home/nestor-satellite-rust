@@ -38,6 +38,7 @@ use crate::i18n::Language;
 use crate::media;
 use crate::pairing::{Display, Enroller, Handed, Pairing, Presenter, TokenStore, Voice, code_for, success};
 use crate::protocol::{self, EnrollmentMethod, Manifest, PairingMethod};
+use crate::speech::SpokenCode;
 use crate::wire::{self, Welcome};
 
 /// Where an enrollment code handed in is waiting for the pairing in progress.
@@ -58,6 +59,8 @@ pub struct Satellite {
     source: Box<dyn AudioSource>,
     sink: Box<dyn AudioSink>,
     presenter: Presenter,
+    /// The device code is said through the sink with the bundled clips.
+    speaks: bool,
     configured: StdMutex<Option<Handed>>,
     refused: StdMutex<HashSet<EnrollmentCode>>,
     slot: Slot,
@@ -75,6 +78,8 @@ pub struct SatelliteBuilder {
     source: Option<Box<dyn AudioSource>>,
     enrollment: Option<(Enrollment, EnrollmentMethod)>,
     accepted: BTreeSet<EnrollmentMethod>,
+    /// A sink was given: the device has a speaker.
+    speaker: bool,
 }
 
 impl Satellite {
@@ -90,7 +95,8 @@ impl Satellite {
                 body: Arc::new(NoBody),
                 source: Box::new(SilenceSource::new()),
                 sink: Box::new(Drain),
-                presenter: Presenter { display: None, voice: None, language: Language::from_env() },
+                presenter: Presenter { display: None, voice: None, speech: None, language: Language::from_env() },
+                speaks: false,
                 configured: StdMutex::new(None),
                 refused: StdMutex::new(HashSet::new()),
                 slot: Arc::new(StdMutex::new(None)),
@@ -109,6 +115,7 @@ impl Satellite {
             source: None,
             enrollment: None,
             accepted: BTreeSet::new(),
+            speaker: false,
         }
     }
 
@@ -188,21 +195,24 @@ impl Satellite {
     }
 
     async fn attempt(&self, http: &Client, audio: &Audio) -> Result<bool> {
-        let token = self.token(http).await?;
+        let token = self.token(http, audio).await?;
         self.connect_once(http, &token, audio).await
     }
 
-    async fn token(&self, http: &Client) -> Result<String> {
+    async fn token(&self, http: &Client, audio: &Audio) -> Result<String> {
         let device = self.manifest.device().id();
         if let Some(token) = self.tokens.load(&self.core, device) {
             return Ok(token);
         }
+        let speech = self.speaks.then(|| Arc::new(SpokenCode::new(audio.sink.clone(), self.presenter.language)));
+        let presenter = Presenter { speech, ..self.presenter.clone() };
         let token = Pairing {
             http,
             core: &self.core,
             manifest: &self.manifest,
+            tokens: &self.tokens,
             body: &*self.body,
-            presenter: &self.presenter,
+            presenter: &presenter,
             poll: self.poll,
             configured: &self.configured,
             refused: &self.refused,
@@ -388,9 +398,13 @@ impl SatelliteBuilder {
         self
     }
 
-    /// The speaker (default: the core's audio is decoded and dropped).
+    /// The speaker (default: the core's audio is decoded and dropped). When the manifest declares
+    /// `audio.playback` and the device has neither [`display`](Self::display) nor
+    /// [`voice`](Self::voice), the satellite says its device code through it with the bundled
+    /// recorded clips (English or French): it declares `device_code.speech`.
     pub fn sink(mut self, sink: impl AudioSink) -> Self {
         self.satellite.sink = Box::new(sink);
+        self.speaker = true;
         self
     }
 
@@ -400,7 +414,8 @@ impl SatelliteBuilder {
         self
     }
 
-    /// A voice to say the device code with: the satellite declares `device_code.speech`.
+    /// A voice to say the device code with, instead of the bundled clips: the satellite declares
+    /// `device_code.speech`.
     pub fn voice(mut self, voice: impl Voice) -> Self {
         self.satellite.presenter.voice = Some(Arc::new(voice));
         self
@@ -420,15 +435,15 @@ impl SatelliteBuilder {
         self.enrollment_by(enrollment, EnrollmentMethod::Provisioning)
     }
 
-    /// [`enrollment`](Self::enrollment), received another way (typed, scanned) before the
-    /// satellite started; that method is declared.
+    /// [`enrollment`](Self::enrollment), received another way (typed) before the satellite
+    /// started; that method is declared.
     pub fn enrollment_by(mut self, enrollment: Enrollment, method: EnrollmentMethod) -> Self {
         self.enrollment = Some((enrollment, method));
         self
     }
 
-    /// The driver hands in enrollment codes this way through an [`Enroller`]: typed on the device
-    /// (`enrollment.input`) or scanned (`enrollment.qr`). The method is declared.
+    /// The driver hands in enrollment codes this way through an [`Enroller`], typed on the device
+    /// (`enrollment.input`): the method is declared.
     pub fn accepts_enrollment(mut self, method: EnrollmentMethod) -> Self {
         self.accepted.insert(method);
         self
@@ -487,7 +502,12 @@ impl SatelliteBuilder {
         if satellite.presenter.display.is_some() {
             methods.insert(PairingMethod::DeviceCodeDisplay);
         }
-        if satellite.presenter.voice.is_some() {
+        let presenter = &satellite.presenter;
+        satellite.speaks = presenter.voice.is_none()
+            && presenter.display.is_none()
+            && self.speaker
+            && satellite.manifest.declares(protocol::AUDIO_PLAYBACK);
+        if presenter.voice.is_some() || satellite.speaks {
             methods.insert(PairingMethod::DeviceCodeSpeech);
         }
         satellite.manifest = satellite.manifest.clone().with_pairing_methods(methods)?;

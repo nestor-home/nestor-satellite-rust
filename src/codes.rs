@@ -48,6 +48,13 @@ impl EnrollmentCode {
     pub fn grouped(&self) -> String {
         format!("{}-{}", &self.0[..4], &self.0[4..])
     }
+
+    /// The SHA-256 of the canonical form, in lowercase hex: how a refused code is kept on disk
+    /// (never in clear).
+    pub fn digest(&self) -> String {
+        let digest = ring::digest::digest(&ring::digest::SHA256, self.0.as_bytes());
+        digest.as_ref().iter().map(|byte| format!("{byte:02x}")).collect()
+    }
 }
 
 impl fmt::Debug for EnrollmentCode {
@@ -181,6 +188,13 @@ mod tests {
         }
         assert_eq!(EnrollmentCode::parse("oil0-ILOO").unwrap().as_str(), "01101100");
         assert_eq!(EnrollmentCode::parse("K7QF2M9X").unwrap().grouped(), "K7QF-2M9X");
+    }
+
+    #[test]
+    fn a_code_s_digest_is_the_sha256_of_its_canonical_form() {
+        let digest = EnrollmentCode::parse("k7qf-2m9x").unwrap().digest();
+        assert_eq!(digest, "af9f1438361c898452f3da3b89fa0541991ac63a6b120e08cb9c41c2c06f7e86");
+        assert_eq!(EnrollmentCode::parse("K7QF2M9X").unwrap().digest(), digest);
     }
 
     #[test]

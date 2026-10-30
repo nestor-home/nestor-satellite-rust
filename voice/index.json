@@ -1,0 +1,38 @@
+{
+  "sample_rate": 16000,
+  "pauses_ms": {
+    "after_text": 250,
+    "between_digits": 350,
+    "after_digits": 800
+  },
+  "languages": {
+    "en": {
+      "0": "en/0.wav",
+      "1": "en/1.wav",
+      "2": "en/2.wav",
+      "3": "en/3.wav",
+      "4": "en/4.wav",
+      "5": "en/5.wav",
+      "6": "en/6.wav",
+      "7": "en/7.wav",
+      "8": "en/8.wav",
+      "9": "en/9.wav",
+      "Pairing code": "en/pairing-code.wav",
+      "I repeat": "en/i-repeat.wav"
+    },
+    "fr": {
+      "0": "fr/0.wav",
+      "1": "fr/1.wav",
+      "2": "fr/2.wav",
+      "3": "fr/3.wav",
+      "4": "fr/4.wav",
+      "5": "fr/5.wav",
+      "6": "fr/6.wav",
+      "7": "fr/7.wav",
+      "8": "fr/8.wav",
+      "9": "fr/9.wav",
+      "Code d'appairage": "fr/code-d-appairage.wav",
+      "Je répète": "fr/je-repete.wav"
+    }
+  }
+}

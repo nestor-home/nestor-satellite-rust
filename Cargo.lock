@@ -1670,6 +1670,7 @@ dependencies = [
  "jsonschema",
  "opus",
  "reqwest",
+ "ring",
  "rtc",
  "serde",
  "serde_json",
