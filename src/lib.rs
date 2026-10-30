@@ -16,6 +16,8 @@
 pub mod audio;
 pub mod body;
 mod client;
+#[cfg(feature = "audio")]
+pub mod devices;
 pub mod dispatch;
 mod error;
 mod media;

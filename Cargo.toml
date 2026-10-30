@@ -16,6 +16,11 @@ include = ["src/**", "schemas/*.json", "README.md", "LICENSE"]
 [lib]
 name = "nestor_satellite"
 
+[[bin]]
+name = "nestor-satellite"
+path = "src/bin/nestor-satellite.rs"
+required-features = ["cli"]
+
 [features]
 default = []
 # The machine's microphone and speaker through cpal. Without it, plug your own AudioSource/AudioSink.
@@ -56,3 +61,7 @@ missing_docs = "warn"
 unwrap_used = "deny"
 expect_used = "deny"
 panic = "deny"
+
+[[example]]
+name = "led"
+required-features = ["audio"]
