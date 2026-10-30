@@ -1,0 +1,53 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://nestor.mathislambert.fr/schemas/satellite/1/intent.expression.json",
+  "title": "An expression, sent as the matching audio is played (a laugh when the laugh is heard).",
+  "x-protocol": "nestor.satellite/1",
+  "x-direction": "to_satellite",
+  "type": "object",
+  "properties": {
+    "type": {
+      "const": "intent.expression"
+    },
+    "id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 64
+    },
+    "at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "payload": {
+      "type": "object",
+      "properties": {
+        "expression": {
+          "enum": [
+            "joy",
+            "sigh",
+            "thoughtful",
+            "whisper",
+            "excited",
+            "ahem"
+          ]
+        },
+        "intensity": {
+          "type": "number",
+          "minimum": 0.0,
+          "maximum": 1.0
+        }
+      },
+      "required": [
+        "expression"
+      ],
+      "additionalProperties": false
+    }
+  },
+  "required": [
+    "type",
+    "id",
+    "at",
+    "payload"
+  ],
+  "additionalProperties": false
+}

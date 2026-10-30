@@ -1,0 +1,58 @@
+[package]
+name = "nestor-satellite"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.91"
+description = "Rust SDK to write Nestor satellite drivers: pairing, WebRTC audio and the nestor data channel."
+license = "MIT"
+authors = ["Mathis Lambert"]
+repository = "https://github.com/nestor-home/nestor-satellite-rust"
+homepage = "https://nestor.mathislambert.fr"
+readme = "README.md"
+keywords = ["nestor", "satellite", "voice-assistant", "webrtc", "robotics"]
+categories = ["multimedia::audio", "network-programming"]
+include = ["src/**", "schemas/*.json", "README.md", "LICENSE"]
+
+[lib]
+name = "nestor_satellite"
+
+[features]
+default = []
+# The machine's microphone and speaker through cpal. Without it, plug your own AudioSource/AudioSink.
+audio = ["dep:cpal"]
+# The `nestor-satellite` command: a microphone + speaker satellite.
+cli = ["audio", "dep:clap", "dep:gethostname", "dep:tracing-subscriber"]
+
+[dependencies]
+async-trait = "0.1.92"
+bytes = "1.12.1"
+chrono = { version = "0.4.45", default-features = false, features = ["clock", "std"] }
+opus = "0.4.0"
+reqwest = { version = "0.12.28", default-features = false, features = ["json", "rustls-tls"] }
+rtc = { version = "0.21.1", default-features = false }
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = "1.0.154"
+thiserror = "2.0.21"
+tokio = { version = "1.54.1", features = ["rt-multi-thread", "macros", "time", "sync", "signal"] }
+tracing = "0.1.44"
+uuid = { version = "1.29.0", features = ["v4"] }
+webrtc = "0.21.1"
+
+cpal = { version = "0.18.2", optional = true }
+clap = { version = "4.6.7", features = ["derive", "env"], optional = true }
+gethostname = { version = "1.1.0", optional = true }
+tracing-subscriber = { version = "0.3.23", features = ["env-filter", "fmt"], optional = true }
+
+[dev-dependencies]
+axum = "0.8.9"
+jsonschema = { version = "0.60.2", default-features = false }
+tempfile = "3.27.0"
+
+[lints.rust]
+unsafe_code = "forbid"
+missing_docs = "warn"
+
+[lints.clippy]
+unwrap_used = "deny"
+expect_used = "deny"
+panic = "deny"

@@ -1,0 +1,35 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://nestor.mathislambert.fr/schemas/satellite/1/intent.beat.json",
+  "title": "A word is being played: a light speech accent.",
+  "x-protocol": "nestor.satellite/1",
+  "x-direction": "to_satellite",
+  "type": "object",
+  "properties": {
+    "type": {
+      "const": "intent.beat"
+    },
+    "id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 64
+    },
+    "at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "payload": {
+      "type": "object",
+      "properties": {},
+      "required": [],
+      "additionalProperties": false
+    }
+  },
+  "required": [
+    "type",
+    "id",
+    "at",
+    "payload"
+  ],
+  "additionalProperties": false
+}

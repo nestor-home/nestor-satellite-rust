@@ -1,0 +1,41 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://nestor.mathislambert.fr/schemas/satellite/1/ack.json",
+  "title": "The intent `of` was received (carrying it out is the device's business).",
+  "x-protocol": "nestor.satellite/1",
+  "x-direction": "to_core",
+  "type": "object",
+  "properties": {
+    "type": {
+      "const": "ack"
+    },
+    "id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 64
+    },
+    "at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "payload": {
+      "type": "object",
+      "properties": {
+        "of": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "of"
+      ],
+      "additionalProperties": false
+    }
+  },
+  "required": [
+    "type",
+    "id",
+    "at",
+    "payload"
+  ],
+  "additionalProperties": false
+}

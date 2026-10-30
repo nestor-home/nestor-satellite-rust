@@ -1,0 +1,46 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://nestor.mathislambert.fr/schemas/satellite/1/intent.behavior.json",
+  "title": "The assistant's attitude changed: show it until the next one.",
+  "x-protocol": "nestor.satellite/1",
+  "x-direction": "to_satellite",
+  "type": "object",
+  "properties": {
+    "type": {
+      "const": "intent.behavior"
+    },
+    "id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 64
+    },
+    "at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "payload": {
+      "type": "object",
+      "properties": {
+        "behavior": {
+          "enum": [
+            "idle",
+            "listening",
+            "thinking",
+            "speaking"
+          ]
+        }
+      },
+      "required": [
+        "behavior"
+      ],
+      "additionalProperties": false
+    }
+  },
+  "required": [
+    "type",
+    "id",
+    "at",
+    "payload"
+  ],
+  "additionalProperties": false
+}
