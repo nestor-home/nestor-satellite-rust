@@ -1,16 +1,21 @@
 //! `nestor-satellite run`: this machine's microphone and speaker as a satellite of a Nestor core.
 //!
 //!     nestor-satellite run --core http://nestor.local:7860 --room salon
+//!     NESTOR_PAIRING_URI=nestor+http://nestor.local:7860/?code=K7QF2M9X nestor-satellite run --room salon
 //!
-//! Useful on a Raspberry Pi with a USB speakerphone. The first run shows a pairing code to confirm
-//! in Nestor; the token is then kept in `~/.config/nestor-satellite/<id>.json`.
+//! Useful on a Raspberry Pi with a USB speakerphone. The first run pairs with the enrollment code
+//! it is given (`--pairing-uri`, `--pairing-code`, or their environment variables), else logs a
+//! device code to type in Nestor; the token is then kept in `~/.config/nestor-satellite/<id>.json`.
 
 use std::path::PathBuf;
 use std::process::ExitCode;
 
 use clap::{Parser, Subcommand};
 use nestor_satellite::devices::{Microphone, Speaker, device_names};
-use nestor_satellite::{AUDIO_CAPTURE, AUDIO_PLAYBACK, Device, Manifest, Satellite, SilenceSource, TokenStore};
+use nestor_satellite::{
+    AUDIO_CAPTURE, AUDIO_PLAYBACK, Device, Enrollment, EnrollmentCode, Error, IDENTIFY, Language, Manifest, PairingUri,
+    Satellite, SilenceSource, TokenStore,
+};
 use tracing_subscriber::EnvFilter;
 
 /// Run a Nestor satellite on this machine.
@@ -32,9 +37,19 @@ enum Command {
 
 #[derive(clap::Args)]
 struct Run {
-    /// The core's voice server, e.g. http://nestor.local:7860.
+    /// The core's voice server, e.g. http://nestor.local:7860 (default: the pairing URI's).
     #[arg(long, env = "NESTOR_CORE")]
-    core: String,
+    core: Option<String>,
+    /// The pairing URI made in Nestor (nestor+http://host:port/?code=K7QF2M9X): the core and an
+    /// enrollment code.
+    #[arg(long, env = "NESTOR_PAIRING_URI", conflicts_with = "pairing_code")]
+    pairing_uri: Option<PairingUri>,
+    /// An enrollment code made in Nestor (K7QF-2M9X), the core given by --core.
+    #[arg(long, env = "NESTOR_PAIRING_CODE")]
+    pairing_code: Option<EnrollmentCode>,
+    /// The language it speaks to people: en or fr (default: from LANG, else en).
+    #[arg(long, value_parser = parse_language)]
+    language: Option<Language>,
     /// The room the satellite is in (a slug: salon, cuisine…).
     #[arg(long)]
     room: String,
@@ -62,7 +77,7 @@ struct Run {
     /// No sound card: send silence and drop the core's voice (conformance runs, CI).
     #[arg(long)]
     null_audio: bool,
-    /// Log more (`RUST_LOG` takes precedence).
+    /// Log more, down to each step of the link (`RUST_LOG` takes precedence).
     #[arg(short, long)]
     verbose: bool,
 }
@@ -93,41 +108,58 @@ async fn main() -> ExitCode {
         },
         Command::Run(run) => {
             init_logging(run.verbose);
-            match satellite(run) {
+            let language = run.language.unwrap_or_else(Language::from_env);
+            match satellite(run, language) {
                 Ok(satellite) => match satellite.run_until(shutdown()).await {
                     Ok(()) => ExitCode::SUCCESS,
-                    Err(error) => fail(&error),
+                    Err(error) => fail(&language.describe(&error)),
                 },
-                Err(error) => fail(&*error),
+                Err(error) => fail(&error),
             }
         }
     }
 }
 
-fn satellite(run: Run) -> Result<Satellite, Box<dyn std::error::Error>> {
+fn satellite(run: Run, language: Language) -> Result<Satellite, String> {
     let id = run.id.unwrap_or_else(default_id);
-    let mut device = Device::new(&id, run.model, run.room)?;
+    let mut device = Device::new(&id, run.model, run.room).map_err(|e| e.to_string())?;
     if let Some(brand) = run.brand {
-        device = device.with_brand(brand)?;
+        device = device.with_brand(brand).map_err(|e| e.to_string())?;
     }
-    let manifest = Manifest::new(device, [AUDIO_CAPTURE, AUDIO_PLAYBACK])?;
+    // No screen and no voice of its own: it pairs with an enrollment code, or a device code read in its log.
+    let manifest = Manifest::new(device, [AUDIO_CAPTURE, AUDIO_PLAYBACK, IDENTIFY]).map_err(|e| e.to_string())?;
     let tokens = match run.token_file {
         Some(path) => TokenStore::new(path),
         None => TokenStore::new(format!("~/.config/nestor-satellite/{id}.json")),
     };
-    let builder = Satellite::builder(run.core, manifest, tokens).ice_servers(run.ice_servers);
-    Ok(if run.null_audio {
+    let enrollment: Option<Enrollment> = run.pairing_uri.map(Into::into).or(run.pairing_code.map(Into::into));
+    let core = match (run.core, enrollment.as_ref().and_then(Enrollment::core)) {
+        (Some(core), _) => core,
+        (None, Some(core)) => core.to_owned(),
+        (None, None) => return Err("give the core's address (--core, NESTOR_CORE) or a pairing URI".to_owned()),
+    };
+    let mut builder = Satellite::builder(core, manifest, tokens).ice_servers(run.ice_servers).language(language);
+    if let Some(enrollment) = enrollment {
+        builder = builder.enrollment(enrollment);
+    }
+    let built = if run.null_audio {
         builder.source(SilenceSource::new()).build() // the core's voice is decoded and dropped
     } else {
         let microphone = run.input_device.map_or_else(Microphone::new, Microphone::named);
         let speaker = run.output_device.map_or_else(Speaker::new, Speaker::named);
         builder.source(microphone).sink(speaker).build()
-    })
+    };
+    built.map_err(|error: Error| language.describe(&error))
+}
+
+fn parse_language(tag: &str) -> Result<Language, String> {
+    Language::parse(tag).ok_or_else(|| format!("{tag:?}: the languages are en and fr"))
 }
 
 fn init_logging(verbose: bool) {
     // webrtc-rs logs every unreachable candidate as an error: the SDK reports what matters.
-    let default = if verbose { "off,nestor_satellite=info" } else { "off,nestor_satellite=warn" };
+    // The device code and pairing steps are logged at info: they are how a headless device is paired.
+    let default = if verbose { "off,nestor_satellite=debug" } else { "off,nestor_satellite=info" };
     let filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new(default));
     tracing_subscriber::fmt().with_env_filter(filter).with_writer(std::io::stderr).init();
 }
@@ -155,7 +187,7 @@ async fn shutdown() {
     }
 }
 
-fn fail(error: &dyn std::error::Error) -> ExitCode {
+fn fail(error: &dyn std::fmt::Display) -> ExitCode {
     eprintln!("nestor-satellite: {error}");
     ExitCode::FAILURE
 }

@@ -1,0 +1,35 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://nestor.mathislambert.fr/schemas/satellite/2/pairing.ticket.json",
+  "title": "201 answer to a pairing request",
+  "x-protocol": "nestor.satellite/2",
+  "type": "object",
+  "properties": {
+    "pairing_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "status": {
+      "enum": [
+        "pending",
+        "approved",
+        "claimed",
+        "expired"
+      ]
+    },
+    "expires_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "device_code": {
+      "type": "string",
+      "pattern": "^[0-9]{6}$"
+    }
+  },
+  "required": [
+    "pairing_id",
+    "status",
+    "expires_at"
+  ],
+  "additionalProperties": false
+}

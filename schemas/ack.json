@@ -1,8 +1,8 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://nestor.mathislambert.fr/schemas/satellite/1/ack.json",
+  "$id": "https://nestor.mathislambert.fr/schemas/satellite/2/ack.json",
   "title": "The intent `of` was received (carrying it out is the device's business).",
-  "x-protocol": "nestor.satellite/1",
+  "x-protocol": "nestor.satellite/2",
   "x-direction": "to_core",
   "type": "object",
   "properties": {

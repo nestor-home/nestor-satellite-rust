@@ -1,8 +1,8 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://nestor.mathislambert.fr/schemas/satellite/1/intent.beat.json",
+  "$id": "https://nestor.mathislambert.fr/schemas/satellite/2/intent.beat.json",
   "title": "A word is being played: a light speech accent.",
-  "x-protocol": "nestor.satellite/1",
+  "x-protocol": "nestor.satellite/2",
   "x-direction": "to_satellite",
   "type": "object",
   "properties": {

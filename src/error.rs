@@ -3,13 +3,13 @@
 use thiserror::Error;
 
 use crate::audio::AudioError;
-use crate::protocol::ProtocolError;
+use crate::protocol::{PairingMethod, ProtocolError};
 
 /// An error of this SDK.
 #[derive(Debug, Error)]
 #[non_exhaustive]
 pub enum Error {
-    /// A value or a message does not follow `nestor.satellite/1`.
+    /// A value or a message does not follow `nestor.satellite/2`.
     #[error(transparent)]
     Protocol(#[from] ProtocolError),
     /// An observation the device did not declare, or the household did not allow.
@@ -20,9 +20,30 @@ pub enum Error {
         /// The capability it needs.
         capability: &'static str,
     },
-    /// The core refused the manifest (HTTP 422): retrying would not help.
-    #[error("the core refused the manifest: {0}")]
-    ManifestRefused(String),
+    /// The core speaks another version of the protocol (`protocol_unsupported`): update the device
+    /// or the core.
+    #[error("the core does not speak {protocol}: {0}", protocol = crate::protocol::PROTOCOL)]
+    ProtocolUnsupported(String),
+    /// The core refused the pairing request as malformed (`invalid_request`): retrying would not help.
+    #[error("the core refused the pairing request: {0}")]
+    PairingRefused(String),
+    /// What was handed in is neither an enrollment code nor a pairing URI.
+    #[error("not an enrollment code: {0}")]
+    InvalidEnrollment(ProtocolError),
+    /// The pairing URI is for another core than the satellite's.
+    #[error("this pairing URI is for the core at {uri_core}, not {core}")]
+    OtherCore {
+        /// The core of the pairing URI.
+        uri_core: String,
+        /// The satellite's core.
+        core: String,
+    },
+    /// An enrollment code handed in by a method the satellite does not declare.
+    #[error("{0} is not among this satellite's pairing methods")]
+    MethodNotDeclared(PairingMethod),
+    /// An enrollment code was handed in while the satellite was not waiting for one.
+    #[error("the satellite is not pairing")]
+    NotPairing,
     /// The core does not know this device's token any more: pair again.
     #[error("the core refused this satellite's token")]
     TokenRefused,

@@ -29,5 +29,13 @@ fn the_binary_passes_the_servers_conformance_suite_as_a_speaker() {
     let report = String::from_utf8_lossy(&output.stdout);
     println!("{report}");
     assert!(output.status.success(), "{report}\n{}", String::from_utf8_lossy(&output.stderr));
-    assert!(report.contains("PASS  reconnects with the same token after a hang-up"));
+    for check in [
+        "PASS  reconnects with the same token after a hang-up",
+        "PASS  pairs with the enrollment code of NESTOR_PAIRING_URI",
+        "PASS  presents a refused enrollment code (used) only once",
+        "PASS  waits for Retry-After when rate-limited",
+        "PASS  keeps polling after a pending identify",
+    ] {
+        assert!(report.contains(check), "{check}: not run\n{report}");
+    }
 }

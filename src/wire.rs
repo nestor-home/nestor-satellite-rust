@@ -34,6 +34,8 @@ pub const INTENT_BEHAVIOR: &str = "intent.behavior";
 pub const INTENT_EXPRESSION: &str = "intent.expression";
 /// `intent.beat`: a word is being played.
 pub const INTENT_BEAT: &str = "intent.beat";
+/// `intent.identify`: a person asks the device to make itself noticed.
+pub const INTENT_IDENTIFY: &str = "intent.identify";
 
 const MAX_ID: usize = 64;
 
@@ -93,6 +95,8 @@ pub enum Intent {
     },
     /// A word is being played: a light speech accent.
     Beat,
+    /// A person asks the device to make itself noticed for a few seconds.
+    Identify,
 }
 
 /// A message from the core.
@@ -192,8 +196,12 @@ pub fn decode(data: Value) -> Result<Inbound, ProtocolError> {
             Message::Intent(Intent::Expression { expression: p.expression, intensity })
         }
         INTENT_BEAT => {
-            let _: BeatPayload = payload_of(&message_type, payload)?;
+            let _: EmptyPayload = payload_of(&message_type, payload)?;
             Message::Intent(Intent::Beat)
+        }
+        INTENT_IDENTIFY => {
+            let _: EmptyPayload = payload_of(&message_type, payload)?;
+            Message::Intent(Intent::Identify)
         }
         _ => Message::Unknown(message_type),
     };
@@ -215,7 +223,7 @@ struct ExpressionPayload {
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
-struct BeatPayload {}
+struct EmptyPayload {}
 
 fn payload_of<T: DeserializeOwned>(message_type: &str, payload: Map<String, Value>) -> Result<T, ProtocolError> {
     serde_json::from_value(Value::Object(payload))
@@ -282,6 +290,7 @@ mod tests {
             Message::Intent(Intent::Expression { expression: Expression::Joy, intensity: 1.0 })
         );
         assert_eq!(nestor(&message(INTENT_BEAT, json!({}))).message, Message::Intent(Intent::Beat));
+        assert_eq!(nestor(&message(INTENT_IDENTIFY, json!({}))).message, Message::Intent(Intent::Identify));
     }
 
     #[test]
@@ -303,6 +312,7 @@ mod tests {
             message(INTENT_EXPRESSION, json!({"expression": "joy", "intensity": 1.5})),
             message(INTENT_EXPRESSION, json!({"expression": "joy", "intensity": true})),
             message(INTENT_BEAT, json!({"x": 1})),
+            message(INTENT_IDENTIFY, json!({"seconds": 5})),
             message(WELCOME, json!({"device_id": "a", "room": "b"})),
             json!({"type": "intent.beat", "id": "m", "at": "2026-10-30T12:00:00Z"}).to_string(),
             json!({"type": "intent.beat", "id": "m", "at": "2026-10-30T12:00:00Z", "payload": {}, "x": 1}).to_string(),

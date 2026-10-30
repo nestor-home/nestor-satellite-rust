@@ -1,0 +1,35 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://nestor.mathislambert.fr/schemas/satellite/2/intent.identify.json",
+  "title": "A person asks the device to make itself noticed for a few seconds (blink, wiggle, chime).",
+  "x-protocol": "nestor.satellite/2",
+  "x-direction": "to_satellite",
+  "type": "object",
+  "properties": {
+    "type": {
+      "const": "intent.identify"
+    },
+    "id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 64
+    },
+    "at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "payload": {
+      "type": "object",
+      "properties": {},
+      "required": [],
+      "additionalProperties": false
+    }
+  },
+  "required": [
+    "type",
+    "id",
+    "at",
+    "payload"
+  ],
+  "additionalProperties": false
+}

@@ -1,8 +1,8 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://nestor.mathislambert.fr/schemas/satellite/1/hello.json",
+  "$id": "https://nestor.mathislambert.fr/schemas/satellite/2/hello.json",
   "title": "First message of a connection: the device's manifest (its id must be the paired one).",
-  "x-protocol": "nestor.satellite/1",
+  "x-protocol": "nestor.satellite/2",
   "x-direction": "to_core",
   "type": "object",
   "properties": {

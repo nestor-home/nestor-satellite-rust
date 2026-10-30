@@ -1,33 +1,51 @@
-//! What the conformance suite does not see: pairing details, refusals and a core that is down,
-//! against a fake core over HTTP.
+//! What the conformance suite does not see: how pairing presents itself on a display and a voice,
+//! enrollment codes handed in, refusals, rate limits and a core that is down, against a fake core
+//! over HTTP.
 #![allow(clippy::unwrap_used)] // test helpers fail loudly
 
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use async_trait::async_trait;
 use axum::extract::{Path, State};
 use axum::http::{HeaderMap, StatusCode};
+use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
 use axum::{Json, Router};
-use nestor_satellite::pairing::pair;
 use nestor_satellite::{
-    AUDIO_CAPTURE, AUDIO_PLAYBACK, AudioError, AudioSource, Device, Error, Manifest, Satellite, SilenceSource,
-    TokenStore,
+    AUDIO_CAPTURE, AUDIO_PLAYBACK, AudioError, AudioSource, Body, Device, Display, Enrollment, EnrollmentMethod, Error,
+    IDENTIFY, Language, Manifest, Satellite, SatelliteBuilder, SilenceSource, TokenStore, Voice,
 };
 use serde_json::{Value, json};
 
-/// A core that hands out pairing tickets, approves each after `pending` polls, and answers offers
-/// with `offer_status` (and 401 for any token it did not hand out).
+/// What the fake core does with enrollment codes.
+#[derive(Clone, Copy, Default, PartialEq)]
+enum Codes {
+    /// Accepted.
+    #[default]
+    Accept,
+    /// Refused: already used.
+    Refuse,
+    /// The pairing no longer waits for a proof: the device code won.
+    NotPending,
+}
+
+/// A core that hands out device codes, approves a pending pairing after `pending` polls (unless
+/// `never_approve`), judges enrollment codes per `codes`, and answers offers with 503 for the tokens
+/// it handed out (401 for any other).
 #[derive(Default)]
 struct FakeCore {
-    tickets: AtomicUsize,
-    polls: AtomicUsize,
     pending: usize,
-    expire_first: bool,
-    refuse_manifest: bool,
-    manifests: Mutex<Vec<Value>>,
+    never_approve: bool,
+    identify: bool,
+    codes: Codes,
+    rate_limit_s: Option<u64>,
+    unsupported: bool,
+    requests: Mutex<Vec<(Instant, Value)>>,
+    enrollments: Mutex<Vec<Value>>,
+    approved: Mutex<Vec<String>>,
+    polls: AtomicUsize,
     offers: Mutex<Vec<String>>,
 }
 
@@ -35,8 +53,9 @@ impl FakeCore {
     async fn serve(self) -> (String, Arc<Self>) {
         let core = Arc::new(self);
         let app = Router::new()
-            .route("/satellites/pair", post(ask))
-            .route("/satellites/pair/{id}", get(poll))
+            .route("/satellites/pairings", post(request))
+            .route("/satellites/pairings/{id}", get(poll))
+            .route("/satellites/pairings/{id}/enrollment", post(enroll))
             .route("/satellites/{device}/offer", post(offer))
             .with_state(core.clone());
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -45,31 +64,92 @@ impl FakeCore {
         (url, core)
     }
 
+    fn requests(&self) -> Vec<Value> {
+        self.requests.lock().unwrap().iter().map(|(_, body)| body.clone()).collect()
+    }
+
+    fn coded_requests(&self) -> usize {
+        self.requests().iter().filter(|r| r.get("enrollment_code").is_some()).count()
+    }
+
+    fn enrollments(&self) -> Vec<Value> {
+        self.enrollments.lock().unwrap().clone()
+    }
+
     fn offers(&self) -> Vec<String> {
         self.offers.lock().unwrap().clone()
     }
+
+    fn approve(&self, id: &str) {
+        self.approved.lock().unwrap().push(id.to_owned());
+    }
 }
 
-async fn ask(State(core): State<Arc<FakeCore>>, Json(manifest): Json<Value>) -> (StatusCode, Json<Value>) {
-    core.manifests.lock().unwrap().push(manifest);
-    if core.refuse_manifest {
-        return (StatusCode::UNPROCESSABLE_ENTITY, Json(json!({"detail": "unsupported protocol"})));
+fn refusal(status: StatusCode, error: &str, extra: Value) -> Response {
+    let mut body = json!({"error": error, "detail": "in English, for logs"});
+    body.as_object_mut().unwrap().extend(extra.as_object().unwrap().clone());
+    (status, Json(body)).into_response()
+}
+
+async fn request(State(core): State<Arc<FakeCore>>, Json(body): Json<Value>) -> Response {
+    let n = {
+        let mut requests = core.requests.lock().unwrap();
+        requests.push((Instant::now(), body.clone()));
+        requests.len()
+    };
+    if core.unsupported {
+        return refusal(StatusCode::UNPROCESSABLE_ENTITY, "protocol_unsupported", json!({}));
     }
-    let n = core.tickets.fetch_add(1, Ordering::SeqCst) + 1;
+    if let (Some(wait), 1) = (core.rate_limit_s, n) {
+        let mut response = refusal(StatusCode::TOO_MANY_REQUESTS, "too_many_attempts", json!({"retry_after_s": wait}));
+        response.headers_mut().insert("retry-after", wait.to_string().parse().unwrap());
+        return response;
+    }
+    let id = format!("p{n}");
+    let expires_at = "2026-10-30T12:10:00+00:00";
+    if body.get("enrollment_code").is_some() {
+        if core.codes == Codes::Refuse {
+            return refusal(StatusCode::FORBIDDEN, "enrollment_refused", json!({"reason": "used"}));
+        }
+        core.approve(&id);
+        return (StatusCode::CREATED, Json(json!({"pairing_id": id, "status": "approved", "expires_at": expires_at})))
+            .into_response();
+    }
     let ticket =
-        json!({"pairing_id": format!("p{n}"), "code": format!("00000{n}"), "expires_at": "2026-10-30T12:05:00+00:00"});
-    (StatusCode::CREATED, Json(ticket))
+        json!({"pairing_id": id, "status": "pending", "expires_at": expires_at, "device_code": format!("00000{n}")});
+    (StatusCode::CREATED, Json(ticket)).into_response()
+}
+
+async fn enroll(State(core): State<Arc<FakeCore>>, Path(id): Path<String>, Json(body): Json<Value>) -> Response {
+    core.enrollments.lock().unwrap().push(body);
+    match core.codes {
+        Codes::Refuse => refusal(StatusCode::FORBIDDEN, "enrollment_refused", json!({"reason": "expired"})),
+        Codes::NotPending => {
+            core.approve(&id); // a person typed the device code first
+            refusal(StatusCode::CONFLICT, "not_pending", json!({}))
+        }
+        Codes::Accept => {
+            core.approve(&id);
+            Json(json!({"status": "approved", "device_id": "enceinte-salon", "room": "salon", "capabilities": []}))
+                .into_response()
+        }
+    }
 }
 
 async fn poll(State(core): State<Arc<FakeCore>>, Path(id): Path<String>) -> Json<Value> {
-    if core.expire_first && id == "p1" {
-        return Json(json!({"status": "expired"}));
+    let polls = core.polls.fetch_add(1, Ordering::SeqCst);
+    let approved = core.approved.lock().unwrap().contains(&id);
+    if approved || (!core.never_approve && polls >= core.pending) {
+        if core.offers().contains(&format!("nst2_{id}")) {
+            return Json(json!({"status": "claimed"}));
+        }
+        return Json(json!({"status": "approved", "token": format!("nst2_{id}"), "device_id": "enceinte-salon",
+                           "room": "salon", "capabilities": ["audio.capture"]}));
     }
-    if core.polls.fetch_add(1, Ordering::SeqCst) < core.pending {
-        return Json(json!({"status": "pending"}));
+    if core.identify && polls == 0 {
+        return Json(json!({"status": "pending", "identify": true}));
     }
-    Json(json!({"status": "approved", "token": format!("nst1_{id}"), "device_id": "enceinte-salon",
-                "room": "salon", "capabilities": ["audio.capture"]}))
+    Json(json!({"status": "pending"}))
 }
 
 async fn offer(State(core): State<Arc<FakeCore>>, headers: HeaderMap, Json(body): Json<Value>) -> StatusCode {
@@ -77,68 +157,309 @@ async fn offer(State(core): State<Arc<FakeCore>>, headers: HeaderMap, Json(body)
     assert!(body["sdp"].as_str().unwrap().contains("m=application"), "the data channel is offered");
     let token = headers["authorization"].to_str().unwrap().trim_start_matches("Bearer ").to_owned();
     core.offers.lock().unwrap().push(token.clone());
-    if token.starts_with("nst1_p") { StatusCode::SERVICE_UNAVAILABLE } else { StatusCode::UNAUTHORIZED }
+    if token.starts_with("nst2_p") { StatusCode::SERVICE_UNAVAILABLE } else { StatusCode::UNAUTHORIZED }
 }
 
 fn manifest() -> Manifest {
     let device = Device::new("enceinte-salon", "raspberry-pi-4", "salon").unwrap();
-    Manifest::new(device, [AUDIO_CAPTURE, AUDIO_PLAYBACK]).unwrap()
+    Manifest::new(device, [AUDIO_CAPTURE, AUDIO_PLAYBACK, IDENTIFY]).unwrap()
 }
 
-fn recorder() -> (Arc<Mutex<Vec<String>>>, impl Fn(&str) + Send + Sync + 'static) {
-    let codes = Arc::new(Mutex::new(Vec::new()));
-    let shown = codes.clone();
-    (codes, move |code: &str| shown.lock().unwrap().push(code.to_owned()))
+/// A display, a voice and a body that note what they are asked to do.
+#[derive(Clone, Default)]
+struct Outputs(Arc<Mutex<Vec<String>>>);
+
+impl Outputs {
+    fn noted(&self) -> Vec<String> {
+        self.0.lock().unwrap().clone()
+    }
+
+    fn note(&self, what: String) {
+        self.0.lock().unwrap().push(what);
+    }
+
+    fn count(&self, prefix: &str) -> usize {
+        self.noted().iter().filter(|n| n.starts_with(prefix)).count()
+    }
 }
 
-#[tokio::test]
-async fn pairing_shows_the_code_and_returns_the_token_once_approved() {
-    let (url, core) = FakeCore { pending: 2, ..Default::default() }.serve().await;
-    let (codes, on_code) = recorder();
-    let token = pair(&reqwest::Client::new(), &url, &manifest(), &on_code, Duration::from_millis(10)).await.unwrap();
-    assert_eq!(token, "nst1_p1");
-    assert_eq!(*codes.lock().unwrap(), ["000001"]);
-    assert_eq!(core.polls.load(Ordering::SeqCst), 3, "polled until approved");
-    assert_eq!(core.manifests.lock().unwrap()[0], manifest().to_json(), "the manifest is sent as is");
+impl Display for Outputs {
+    fn show_code(&self, text: &str, code: &str) {
+        self.note(format!("show {text} {code}"));
+    }
+
+    fn show_message(&self, text: &str) {
+        self.note(format!("message {text}"));
+    }
+
+    fn clear(&self) {
+        self.note("clear".into());
+    }
 }
 
-#[tokio::test]
-async fn an_expired_code_is_replaced_by_a_new_one() {
-    let (url, _core) = FakeCore { expire_first: true, ..Default::default() }.serve().await;
-    let (codes, on_code) = recorder();
-    let token = pair(&reqwest::Client::new(), &url, &manifest(), &on_code, Duration::from_millis(10)).await.unwrap();
-    assert_eq!(token, "nst1_p2");
-    assert_eq!(*codes.lock().unwrap(), ["000001", "000002"]);
+impl Voice for Outputs {
+    fn say(&self, text: &str) {
+        self.note(format!("say {text}"));
+    }
 }
 
-#[tokio::test]
-async fn a_manifest_the_core_refuses_stops_the_satellite() {
-    let (url, _core) = FakeCore { refuse_manifest: true, ..Default::default() }.serve().await;
+impl Body for Outputs {
+    fn identify(&self) {
+        self.note("identify".into());
+    }
+}
+
+fn builder(url: &str, tokens: &TokenStore) -> SatelliteBuilder {
+    Satellite::builder(url, manifest(), tokens.clone())
+        .language(Language::En)
+        .poll_interval(Duration::from_millis(10))
+        .backoff(Duration::from_millis(20), Duration::from_millis(40))
+}
+
+fn tokens() -> (tempfile::TempDir, TokenStore) {
     let dir = tempfile::tempdir().unwrap();
-    let satellite = Satellite::builder(url, manifest(), TokenStore::new(dir.path().join("t.json"))).build();
+    let store = TokenStore::new(dir.path().join("token.json"));
+    (dir, store)
+}
+
+fn code() -> Enrollment {
+    Enrollment::parse("k7qf-2m9x").unwrap()
+}
+
+#[tokio::test]
+async fn the_device_code_is_shown_and_said_twice_digit_by_digit_until_it_is_typed() {
+    let (url, core) = FakeCore { pending: 3, ..Default::default() }.serve().await;
+    let (_dir, tokens) = tokens();
+    let outputs = Outputs::default();
+    let satellite = builder(&url, &tokens).display(outputs.clone()).voice(outputs.clone()).build().unwrap();
+    satellite.run_until(wait_for(|| !core.offers().is_empty())).await.unwrap();
+
+    assert_eq!(
+        outputs.noted(),
+        [
+            "show To pair this device, type this code in Nestor: 000001",
+            "say My pairing code is 0, 0, 0, 0, 0, 1. Once more: 0, 0, 0, 0, 0, 1.",
+            "clear",
+        ]
+    );
+    let sent = &core.requests()[0];
+    assert_eq!(sent, &json!({"manifest": sent["manifest"].clone()}), "no enrollment code: the manifest alone");
+    assert_eq!(
+        sent["manifest"]["pairing_methods"],
+        json!(["device_code.display", "device_code.speech", "enrollment.provisioning"])
+    );
+    assert_eq!(tokens.load(&url, "enceinte-salon").as_deref(), Some("nst2_p1"), "the token is kept");
+    assert_eq!(core.offers(), ["nst2_p1"]);
+}
+
+#[tokio::test]
+async fn without_display_or_voice_only_provisioning_is_declared_and_the_device_code_still_pairs() {
+    let (url, core) = FakeCore::default().serve().await;
+    let (_dir, tokens) = tokens();
+    let satellite = builder(&url, &tokens).build().unwrap();
+    assert_eq!(satellite.manifest().to_json()["pairing_methods"], json!(["enrollment.provisioning"]));
+    satellite.run_until(wait_for(|| !core.offers().is_empty())).await.unwrap();
+    assert_eq!(core.offers(), ["nst2_p1"], "paired with the device code read in the log");
+}
+
+#[tokio::test]
+async fn a_pending_identify_reaches_the_body_and_polling_goes_on() {
+    let (url, core) = FakeCore { pending: 3, identify: true, ..Default::default() }.serve().await;
+    let (_dir, tokens) = tokens();
+    let outputs = Outputs::default();
+    let satellite = builder(&url, &tokens).body(outputs.clone()).build().unwrap();
+    satellite.run_until(wait_for(|| !core.offers().is_empty())).await.unwrap();
+    assert_eq!(outputs.noted(), ["identify"]);
+    assert!(core.polls.load(Ordering::SeqCst) >= 4, "kept polling until approved");
+}
+
+#[tokio::test]
+async fn a_configured_enrollment_code_pairs_at_once_without_presenting_a_device_code() {
+    let (url, core) = FakeCore { never_approve: true, ..Default::default() }.serve().await;
+    let (_dir, tokens) = tokens();
+    let outputs = Outputs::default();
+    let satellite = builder(&url, &tokens).display(outputs.clone()).enrollment(code()).build().unwrap();
+    satellite.run_until(wait_for(|| !core.offers().is_empty())).await.unwrap();
+
+    let sent = &core.requests()[0];
+    assert_eq!((&sent["enrollment_code"], &sent["method"]), (&json!("K7QF2M9X"), &json!("enrollment.provisioning")));
+    assert_eq!(outputs.noted(), ["clear"], "no device code presented");
+    assert_eq!(core.offers(), ["nst2_p1"]);
+}
+
+#[tokio::test]
+async fn a_pairing_uri_brings_its_code_to_its_own_core_only() {
+    let (_dir, tokens) = tokens();
+    let uri = Enrollment::parse("nestor+http://127.0.0.1:9/?code=K7QF2M9X").unwrap();
+    assert!(builder("http://127.0.0.1:9/", &tokens).enrollment(uri.clone()).build().is_ok());
+    let elsewhere = builder("http://127.0.0.1:10", &tokens).enrollment(uri).build();
+    assert!(matches!(elsewhere, Err(Error::OtherCore { .. })));
+    assert!(matches!(builder("nestor.local", &tokens).build(), Err(Error::Protocol(_))), "an http(s) URL");
+}
+
+#[tokio::test]
+async fn a_refused_enrollment_code_is_said_once_never_sent_again_and_the_device_code_takes_over() {
+    let (url, core) = FakeCore { codes: Codes::Refuse, ..Default::default() }.serve().await;
+    let (_dir, tokens) = tokens();
+    let outputs = Outputs::default();
+    let satellite = builder(&url, &tokens).display(outputs.clone()).enrollment(code()).build().unwrap();
+    satellite.run_until(wait_for(|| !core.offers().is_empty())).await.unwrap();
+
+    assert_eq!(core.coded_requests(), 1, "presented once");
+    assert_eq!(
+        outputs.noted(),
+        [
+            "message This enrollment code was already used. Use the device code instead.",
+            "show To pair this device, type this code in Nestor: 000002",
+            "clear",
+        ]
+    );
+    assert_eq!(core.offers(), ["nst2_p2"]);
+}
+
+#[tokio::test]
+async fn a_code_typed_while_pending_is_sent_by_its_method_and_pairs() {
+    let (url, core) = FakeCore { never_approve: true, ..Default::default() }.serve().await;
+    let (_dir, tokens) = tokens();
+    let outputs = Outputs::default();
+    let satellite =
+        builder(&url, &tokens).display(outputs.clone()).accepts_enrollment(EnrollmentMethod::Input).build().unwrap();
+    assert_eq!(
+        satellite.manifest().to_json()["pairing_methods"],
+        json!(["device_code.display", "enrollment.input", "enrollment.provisioning"])
+    );
+    let enroller = satellite.enroller();
+    assert!(matches!(enroller.enroll("K7QF-2M9X", EnrollmentMethod::Input), Err(Error::NotPairing)), "not started");
+    let typing = async {
+        wait_for(|| outputs.count("show") == 1).await;
+        assert!(enroller.is_pairing());
+        enroller.enroll("k7qf 2m9x", EnrollmentMethod::Input).unwrap();
+        wait_for(|| !core.offers().is_empty()).await;
+    };
+    satellite.run_until(typing).await.unwrap();
+
+    assert_eq!(core.enrollments(), [json!({"enrollment_code": "K7QF2M9X", "method": "enrollment.input"})]);
+    assert_eq!(core.offers(), ["nst2_p1"]);
+    assert_eq!(outputs.noted().last().map(String::as_str), Some("clear"), "the code is no longer shown");
+    assert!(!enroller.is_pairing());
+}
+
+#[tokio::test]
+async fn when_the_device_code_won_the_race_the_token_still_comes() {
+    let (url, core) = FakeCore { never_approve: true, codes: Codes::NotPending, ..Default::default() }.serve().await;
+    let (_dir, tokens) = tokens();
+    let outputs = Outputs::default();
+    let satellite =
+        builder(&url, &tokens).display(outputs.clone()).accepts_enrollment(EnrollmentMethod::Qr).build().unwrap();
+    let enroller = satellite.enroller();
+    let scanning = async {
+        wait_for(|| outputs.count("show") == 1).await;
+        enroller.enroll("nestor+http://127.0.0.1:1/?code=K7QF2M9X", EnrollmentMethod::Qr).unwrap_err();
+        let uri = format!("{}/?code=K7QF2M9X", url.replace("http://", "nestor+http://"));
+        enroller.enroll(&uri, EnrollmentMethod::Qr).unwrap();
+        wait_for(|| !core.offers().is_empty()).await;
+    };
+    satellite.run_until(scanning).await.unwrap();
+    assert_eq!(core.enrollments().len(), 1);
+    assert_eq!(core.offers(), ["nst2_p1"]);
+    assert_eq!(outputs.count("message"), 0, "a lost race is no refusal");
+}
+
+#[tokio::test]
+async fn an_enrollment_code_is_handed_in_only_by_a_declared_method_and_as_a_code() {
+    let (url, core) = FakeCore { never_approve: true, ..Default::default() }.serve().await;
+    let (_dir, tokens) = tokens();
+    let outputs = Outputs::default();
+    let satellite = builder(&url, &tokens).display(outputs.clone()).build().unwrap();
+    let enroller = satellite.enroller();
+    let typing = async {
+        wait_for(|| outputs.count("show") == 1).await;
+        let typed = enroller.enroll("K7QF-2M9X", EnrollmentMethod::Input);
+        assert!(matches!(typed, Err(Error::MethodNotDeclared(_))), "{typed:?}");
+        let wrong = enroller.enroll("K7QF-2M9U", EnrollmentMethod::Provisioning);
+        assert!(matches!(wrong, Err(Error::InvalidEnrollment(_))), "{wrong:?}");
+        enroller.enroll("K7QF-2M9X", EnrollmentMethod::Provisioning).unwrap();
+        wait_for(|| !core.offers().is_empty()).await;
+    };
+    satellite.run_until(typing).await.unwrap();
+    assert_eq!(core.enrollments().len(), 1);
+}
+
+#[tokio::test]
+async fn a_code_refused_while_pending_is_said_and_the_device_code_presented_again() {
+    let (url, core) = FakeCore { pending: 40, codes: Codes::Refuse, ..Default::default() }.serve().await;
+    let (_dir, tokens) = tokens();
+    let outputs = Outputs::default();
+    let satellite =
+        builder(&url, &tokens).voice(outputs.clone()).accepts_enrollment(EnrollmentMethod::Input).build().unwrap();
+    let enroller = satellite.enroller();
+    let typing = async {
+        wait_for(|| outputs.count("say") == 1).await;
+        enroller.enroll("K7QF2M9X", EnrollmentMethod::Input).unwrap();
+        wait_for(|| outputs.count("say") == 3).await;
+        enroller.enroll("K7QF2M9X", EnrollmentMethod::Input).unwrap(); // typed again
+        wait_for(|| !core.offers().is_empty()).await;
+    };
+    satellite.run_until(typing).await.unwrap();
+    assert_eq!(core.enrollments().len(), 1, "a refused code is never sent again");
+    assert_eq!(
+        outputs.noted()[1..3],
+        [
+            "say This enrollment code has expired. Use the device code instead.",
+            "say My pairing code is 0, 0, 0, 0, 0, 1. Once more: 0, 0, 0, 0, 0, 1.",
+        ]
+    );
+}
+
+#[tokio::test]
+async fn a_rate_limited_device_waits_for_retry_after() {
+    let (url, core) = FakeCore { rate_limit_s: Some(1), never_approve: true, ..Default::default() }.serve().await;
+    let (_dir, tokens) = tokens();
+    let satellite = builder(&url, &tokens).enrollment(code()).build().unwrap();
+    satellite.run_until(wait_for(|| !core.offers().is_empty())).await.unwrap();
+    let requests = core.requests.lock().unwrap().clone();
+    assert_eq!(requests.len(), 2);
+    assert!(requests[1].0 - requests[0].0 >= Duration::from_secs(1), "waited Retry-After");
+    assert_eq!(requests[1].1["enrollment_code"], "K7QF2M9X", "the same code, once allowed");
+}
+
+#[tokio::test]
+async fn a_core_speaking_another_protocol_stops_the_satellite_and_says_so() {
+    let (url, _core) = FakeCore { unsupported: true, ..Default::default() }.serve().await;
+    let (_dir, tokens) = tokens();
+    let outputs = Outputs::default();
+    let satellite = builder(&url, &tokens).display(outputs.clone()).build().unwrap();
     let outcome = tokio::time::timeout(Duration::from_secs(5), satellite.run()).await.unwrap();
-    assert!(matches!(outcome, Err(Error::ManifestRefused(detail)) if detail == "unsupported protocol"));
+    assert!(matches!(outcome, Err(Error::ProtocolUnsupported(_))), "{outcome:?}");
+    assert_eq!(outputs.noted(), ["message Nestor does not speak this device's protocol: update the device or Nestor."]);
+}
+
+#[tokio::test]
+async fn shutting_down_while_pending_stops_waiting_for_a_code() {
+    let (url, core) = FakeCore { never_approve: true, ..Default::default() }.serve().await;
+    let (_dir, tokens) = tokens();
+    let satellite = builder(&url, &tokens).build().unwrap();
+    let enroller = satellite.enroller();
+    satellite.run_until(wait_for(|| core.polls.load(Ordering::SeqCst) >= 2)).await.unwrap();
+    assert!(!enroller.is_pairing());
+    assert!(matches!(enroller.enroll("K7QF2M9X", EnrollmentMethod::Provisioning), Err(Error::NotPairing)));
+    assert_eq!(tokens.load(&url, "enceinte-salon"), None);
 }
 
 #[tokio::test]
 async fn a_refused_token_is_forgotten_and_the_device_pairs_again() {
     let (url, core) = FakeCore::default().serve().await;
-    let dir = tempfile::tempdir().unwrap();
-    let tokens = TokenStore::new(dir.path().join("t.json"));
-    tokens.save(&url, "enceinte-salon", "nst1_from-another-life").unwrap();
-    let (codes, on_code) = recorder();
-    let satellite = Satellite::builder(url.clone(), manifest(), tokens.clone())
-        .on_code(on_code)
-        .poll_interval(Duration::from_millis(10))
-        .backoff(Duration::from_millis(20), Duration::from_millis(40))
-        .build();
+    let (_dir, tokens) = tokens();
+    tokens.save(&url, "enceinte-salon", "nst2_from-another-life").unwrap();
+    let outputs = Outputs::default();
+    let satellite = builder(&url, &tokens).display(outputs.clone()).build().unwrap();
     satellite.run_until(wait_for(|| core.offers().len() >= 3)).await.unwrap();
 
     let offers = core.offers();
-    assert_eq!(offers[0], "nst1_from-another-life");
-    assert!(offers[1..].iter().all(|t| t == "nst1_p1"), "then the new token, retried: {offers:?}");
-    assert_eq!(*codes.lock().unwrap(), ["000001"], "paired once");
-    assert_eq!(tokens.load(&url, "enceinte-salon").as_deref(), Some("nst1_p1"));
+    assert_eq!(offers[0], "nst2_from-another-life");
+    assert!(offers[1..].iter().all(|t| t == "nst2_p1"), "then the new token, retried: {offers:?}");
+    assert_eq!(outputs.count("show"), 1, "paired once");
+    assert_eq!(tokens.load(&url, "enceinte-salon").as_deref(), Some("nst2_p1"));
 }
 
 #[derive(Clone, Default)]
@@ -165,18 +486,19 @@ impl AudioSource for CountingSource {
 
 #[tokio::test]
 async fn an_unreachable_core_is_retried_until_shutdown_and_audio_is_released() {
-    let dir = tempfile::tempdir().unwrap();
+    let (_dir, tokens) = tokens();
     let source = CountingSource::default();
-    let (codes, on_code) = recorder();
-    let satellite = Satellite::builder("http://127.0.0.1:9", manifest(), TokenStore::new(dir.path().join("t.json")))
+    let outputs = Outputs::default();
+    let satellite = builder("http://127.0.0.1:9", &tokens)
         .source(source.clone())
-        .on_code(on_code)
+        .display(outputs.clone())
         .backoff(Duration::from_millis(10), Duration::from_millis(50))
-        .build();
+        .build()
+        .unwrap();
     satellite.run_until(tokio::time::sleep(Duration::from_millis(300))).await.unwrap();
     let counts = (source.opened.load(Ordering::SeqCst), source.closed.load(Ordering::SeqCst));
     assert_eq!(counts, (1, 1), "opened once, released at shutdown");
-    assert!(codes.lock().unwrap().is_empty());
+    assert!(outputs.noted().is_empty(), "no code without a core");
 }
 
 struct BrokenMicrophone;
@@ -194,10 +516,8 @@ impl AudioSource for BrokenMicrophone {
 
 #[tokio::test]
 async fn a_microphone_that_cannot_open_fails_clearly() {
-    let dir = tempfile::tempdir().unwrap();
-    let satellite = Satellite::builder("http://127.0.0.1:9", manifest(), TokenStore::new(dir.path().join("t.json")))
-        .source(BrokenMicrophone)
-        .build();
+    let (_dir, tokens) = tokens();
+    let satellite = builder("http://127.0.0.1:9", &tokens).source(BrokenMicrophone).build().unwrap();
     assert!(matches!(satellite.run().await, Err(Error::Audio(e)) if e.0 == "no input device"));
 }
 

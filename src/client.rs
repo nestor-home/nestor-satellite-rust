@@ -4,7 +4,7 @@
 //! tracks, the `nestor` data channel for `hello`/`welcome`, intents (acknowledged) and
 //! observations. Offers are sent once ICE gathering is complete (no trickle ICE).
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeSet, HashSet};
 use std::future::{Future, pending};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex as StdMutex};
@@ -31,14 +31,23 @@ use webrtc::rtp_transceiver::RtpSender;
 
 use crate::audio::{AudioSink, AudioSource, Drain, SilenceSource};
 use crate::body::{Body, NoBody};
+use crate::codes::{Enrollment, EnrollmentCode, base_url};
 use crate::dispatch::{Dispatcher, Outcome};
 use crate::error::{Error, Result};
+use crate::i18n::Language;
 use crate::media;
-use crate::pairing::{TokenStore, pair, show_code, success};
-use crate::protocol::{self, Manifest};
+use crate::pairing::{Display, Enroller, Handed, Pairing, Presenter, TokenStore, Voice, code_for, success};
+use crate::protocol::{self, EnrollmentMethod, Manifest, PairingMethod};
 use crate::wire::{self, Welcome};
 
-type OnCode = Arc<dyn Fn(&str) + Send + Sync>;
+/// Where an enrollment code handed in is waiting for the pairing in progress.
+type Slot = Arc<StdMutex<Option<mpsc::UnboundedSender<Handed>>>>;
+
+/// The environment variable holding a pairing URI (`nestor+http://host:port/?code=K7QF2M9X`).
+pub const PAIRING_URI_ENV: &str = "NESTOR_PAIRING_URI";
+/// The environment variable holding an enrollment code alone (`K7QF-2M9X`), the core's address
+/// being given separately.
+pub const PAIRING_CODE_ENV: &str = "NESTOR_PAIRING_CODE";
 
 /// A satellite of a Nestor core. Build it with [`Satellite::builder`], then [`run`](Self::run) it.
 pub struct Satellite {
@@ -48,7 +57,10 @@ pub struct Satellite {
     body: Arc<dyn Body>,
     source: Box<dyn AudioSource>,
     sink: Box<dyn AudioSink>,
-    on_code: OnCode,
+    presenter: Presenter,
+    configured: StdMutex<Option<Handed>>,
+    refused: StdMutex<HashSet<EnrollmentCode>>,
+    slot: Slot,
     ice_servers: Vec<String>,
     poll: Duration,
     backoff: (Duration, Duration),
@@ -61,12 +73,14 @@ pub struct Satellite {
 pub struct SatelliteBuilder {
     satellite: Satellite,
     source: Option<Box<dyn AudioSource>>,
+    enrollment: Option<(Enrollment, EnrollmentMethod)>,
+    accepted: BTreeSet<EnrollmentMethod>,
 }
 
 impl Satellite {
     /// A satellite of the core at `core` (`http://nestor.local:7860`), keeping its token in `tokens`.
     pub fn builder(core: impl Into<String>, manifest: Manifest, tokens: TokenStore) -> SatelliteBuilder {
-        let core = core.into().trim_end_matches('/').to_owned();
+        let core = core.into();
         let declared = manifest.capabilities().iter().map(|c| c.name().to_owned()).collect();
         SatelliteBuilder {
             satellite: Satellite {
@@ -76,7 +90,10 @@ impl Satellite {
                 body: Arc::new(NoBody),
                 source: Box::new(SilenceSource::new()),
                 sink: Box::new(Drain),
-                on_code: Arc::new(show_code),
+                presenter: Presenter { display: None, voice: None, language: Language::from_env() },
+                configured: StdMutex::new(None),
+                refused: StdMutex::new(HashSet::new()),
+                slot: Arc::new(StdMutex::new(None)),
                 ice_servers: Vec::new(),
                 poll: Duration::from_secs(1),
                 backoff: (Duration::from_millis(500), Duration::from_secs(30)),
@@ -90,6 +107,17 @@ impl Satellite {
                 }),
             },
             source: None,
+            enrollment: None,
+            accepted: BTreeSet::new(),
+        }
+    }
+
+    /// A handle to hand in enrollment codes while the satellite waits to be paired.
+    pub fn enroller(&self) -> Enroller {
+        Enroller {
+            core: self.core.clone(),
+            methods: self.manifest.pairing_methods().collect(),
+            slot: self.slot.clone(),
         }
     }
 
@@ -105,8 +133,9 @@ impl Satellite {
 
     /// Run until a fatal error: pair when needed, connect, and reconnect with a growing delay.
     ///
-    /// Only a manifest the core refuses or an audio device that cannot open stop it; a core that
-    /// is down, a link that fails, a refused token (forgotten, then paired again) do not.
+    /// Only a core speaking another protocol, a pairing request it refuses as malformed or an audio
+    /// device that cannot open stop it; a core that is down, a link that fails, a refused token
+    /// (forgotten, then paired again) do not.
     pub async fn run(self) -> Result<()> {
         self.run_until(pending()).await
     }
@@ -146,7 +175,7 @@ impl Satellite {
                     self.tokens.forget()?;
                     continue;
                 }
-                Err(error @ Error::ManifestRefused(_)) => return Err(error),
+                Err(error @ (Error::ProtocolUnsupported(_) | Error::PairingRefused(_))) => return Err(error),
                 Err(error) => {
                     warn!(%error, "satellite link failed");
                     false
@@ -168,7 +197,19 @@ impl Satellite {
         if let Some(token) = self.tokens.load(&self.core, device) {
             return Ok(token);
         }
-        let token = pair(http, &self.core, &self.manifest, &*self.on_code, self.poll).await?;
+        let token = Pairing {
+            http,
+            core: &self.core,
+            manifest: &self.manifest,
+            body: &*self.body,
+            presenter: &self.presenter,
+            poll: self.poll,
+            configured: &self.configured,
+            refused: &self.refused,
+            slot: &self.slot,
+        }
+        .run()
+        .await?;
         self.tokens.save(&self.core, device, &token)?;
         info!(path = %self.tokens.path().display(), "paired: token saved");
         Ok(token)
@@ -264,7 +305,8 @@ impl Satellite {
             }
         });
 
-        let dispatcher = Dispatcher::new(self.body.clone());
+        let dispatcher =
+            Dispatcher::new(Arc::new(Announced { body: self.body.clone(), language: self.presenter.language }));
         let welcome_deadline = tokio::time::sleep(self.welcome_timeout);
         tokio::pin!(welcome_deadline);
         loop {
@@ -352,9 +394,43 @@ impl SatelliteBuilder {
         self
     }
 
-    /// How the pairing code is shown to the person (default: printed, [`show_code`]).
-    pub fn on_code(mut self, on_code: impl Fn(&str) + Send + Sync + 'static) -> Self {
-        self.satellite.on_code = Arc::new(on_code);
+    /// A screen to show the device code on: the satellite declares `device_code.display`.
+    pub fn display(mut self, display: impl Display) -> Self {
+        self.satellite.presenter.display = Some(Arc::new(display));
+        self
+    }
+
+    /// A voice to say the device code with: the satellite declares `device_code.speech`.
+    pub fn voice(mut self, voice: impl Voice) -> Self {
+        self.satellite.presenter.voice = Some(Arc::new(voice));
+        self
+    }
+
+    /// The language the satellite speaks to people in (default: from `LANG`, else English).
+    pub fn language(mut self, language: Language) -> Self {
+        self.satellite.presenter.language = language;
+        self
+    }
+
+    /// The enrollment code or pairing URI set in the device's configuration
+    /// (`enrollment.provisioning`): sent with the first pairing request, no device code presented
+    /// unless it is refused. Without one, [`build`](Self::build) reads `NESTOR_PAIRING_URI`, then
+    /// `NESTOR_PAIRING_CODE`.
+    pub fn enrollment(self, enrollment: Enrollment) -> Self {
+        self.enrollment_by(enrollment, EnrollmentMethod::Provisioning)
+    }
+
+    /// [`enrollment`](Self::enrollment), received another way (typed, scanned) before the
+    /// satellite started; that method is declared.
+    pub fn enrollment_by(mut self, enrollment: Enrollment, method: EnrollmentMethod) -> Self {
+        self.enrollment = Some((enrollment, method));
+        self
+    }
+
+    /// The driver hands in enrollment codes this way through an [`Enroller`]: typed on the device
+    /// (`enrollment.input`) or scanned (`enrollment.qr`). The method is declared.
+    pub fn accepts_enrollment(mut self, method: EnrollmentMethod) -> Self {
+        self.accepted.insert(method);
         self
     }
 
@@ -382,16 +458,83 @@ impl SatelliteBuilder {
         self
     }
 
-    /// The satellite.
-    pub fn build(mut self) -> Satellite {
+    /// The satellite, with the pairing methods its outputs and inputs carry out.
+    ///
+    /// Fails when the core's address is not an http(s) URL, when the enrollment code (given here or
+    /// in `NESTOR_PAIRING_URI` / `NESTOR_PAIRING_CODE`) is not one, or when its pairing URI is for
+    /// another core.
+    pub fn build(mut self) -> Result<Satellite> {
+        let satellite = &mut self.satellite;
+        satellite.core = base_url(&satellite.core)?;
         if let Some(source) = self.source {
-            if self.satellite.manifest.declares(protocol::AUDIO_CAPTURE) {
-                self.satellite.source = source;
+            if satellite.manifest.declares(protocol::AUDIO_CAPTURE) {
+                satellite.source = source;
             } else {
                 warn!("a microphone was given but audio.capture is not declared: silence is sent");
             }
         }
-        self.satellite
+        let enrollment = match self.enrollment {
+            Some(given) => Some(given),
+            None => from_env()?.map(|enrollment| (enrollment, EnrollmentMethod::Provisioning)),
+        };
+        let mut methods = BTreeSet::from([PairingMethod::EnrollmentProvisioning]);
+        methods.extend(self.accepted.iter().map(|&m| PairingMethod::from(m)));
+        if let Some((enrollment, method)) = &enrollment {
+            let code = code_for(enrollment, &satellite.core)?.clone();
+            methods.insert((*method).into());
+            satellite.configured = StdMutex::new(Some(Handed { code, method: *method }));
+        }
+        if satellite.presenter.display.is_some() {
+            methods.insert(PairingMethod::DeviceCodeDisplay);
+        }
+        if satellite.presenter.voice.is_some() {
+            methods.insert(PairingMethod::DeviceCodeSpeech);
+        }
+        satellite.manifest = satellite.manifest.clone().with_pairing_methods(methods)?;
+        Ok(self.satellite)
+    }
+}
+
+/// The enrollment configured in the environment: `NESTOR_PAIRING_URI`, else `NESTOR_PAIRING_CODE`.
+fn from_env() -> Result<Option<Enrollment>> {
+    for name in [PAIRING_URI_ENV, PAIRING_CODE_ENV] {
+        if let Some(value) = std::env::var(name).ok().filter(|v| !v.trim().is_empty()) {
+            return Enrollment::parse(&value).map(Some).map_err(Error::InvalidEnrollment);
+        }
+    }
+    Ok(None)
+}
+
+/// The driver's body, with identify requests said in the log too (a person looks for the device).
+struct Announced {
+    body: Arc<dyn Body>,
+    language: Language,
+}
+
+impl Body for Announced {
+    fn behavior(&self, behavior: protocol::Behavior) {
+        self.body.behavior(behavior);
+    }
+
+    fn expression(&self, expression: protocol::Expression, intensity: f64) {
+        self.body.expression(expression, intensity);
+    }
+
+    fn beat(&self) {
+        self.body.beat();
+    }
+
+    fn heartbeat(&self) {
+        self.body.heartbeat();
+    }
+
+    fn identify(&self) {
+        info!("{}", self.language.say("identify-requested", &[]));
+        self.body.identify();
+    }
+
+    fn connected(&self, up: bool) {
+        self.body.connected(up);
     }
 }
 
@@ -623,7 +766,8 @@ mod tests {
     fn observer(capabilities: &[&str]) -> (Satellite, Observer) {
         let device = Device::new("capteur-entree", "esp32", "entree").unwrap();
         let manifest = Manifest::new(device, capabilities.iter().copied()).unwrap();
-        let satellite = Satellite::builder("http://127.0.0.1:9", manifest, TokenStore::new("unused.json")).build();
+        let satellite =
+            Satellite::builder("http://127.0.0.1:9", manifest, TokenStore::new("unused.json")).build().unwrap();
         let observer = satellite.observer();
         (satellite, observer)
     }

@@ -1,0 +1,40 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://nestor.mathislambert.fr/schemas/satellite/2/pairing.state.json",
+  "title": "GET /satellites/pairings/{pairing_id}: where a pairing stands",
+  "x-protocol": "nestor.satellite/2",
+  "type": "object",
+  "properties": {
+    "status": {
+      "enum": [
+        "pending",
+        "approved",
+        "claimed",
+        "expired"
+      ]
+    },
+    "token": {
+      "type": "string",
+      "minLength": 1
+    },
+    "device_id": {
+      "type": "string"
+    },
+    "room": {
+      "type": "string"
+    },
+    "capabilities": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "identify": {
+      "const": true
+    }
+  },
+  "required": [
+    "status"
+  ],
+  "additionalProperties": false
+}

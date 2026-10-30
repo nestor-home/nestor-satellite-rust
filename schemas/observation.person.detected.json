@@ -1,8 +1,8 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://nestor.mathislambert.fr/schemas/satellite/1/observation.person.detected.json",
+  "$id": "https://nestor.mathislambert.fr/schemas/satellite/2/observation.person.detected.json",
   "title": "People seen by the device's own detector, now (no image leaves the device).",
-  "x-protocol": "nestor.satellite/1",
+  "x-protocol": "nestor.satellite/2",
   "x-direction": "to_core",
   "type": "object",
   "properties": {

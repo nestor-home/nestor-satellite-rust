@@ -1,8 +1,8 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://nestor.mathislambert.fr/schemas/satellite/1/intent.expression.json",
+  "$id": "https://nestor.mathislambert.fr/schemas/satellite/2/intent.expression.json",
   "title": "An expression, sent as the matching audio is played (a laugh when the laugh is heard).",
-  "x-protocol": "nestor.satellite/1",
+  "x-protocol": "nestor.satellite/2",
   "x-direction": "to_satellite",
   "type": "object",
   "properties": {

@@ -63,6 +63,7 @@ impl Dispatcher {
                     Intent::Behavior(behavior) => self.body.behavior(behavior),
                     Intent::Expression { expression, intensity } => self.body.expression(expression, intensity),
                     Intent::Beat => self.body.beat(),
+                    Intent::Identify => self.body.identify(),
                 }
                 Outcome::Reply(wire::ack(&received.id).to_string())
             }
@@ -106,6 +107,9 @@ mod tests {
         fn heartbeat(&self) {
             self.note("heartbeat".into());
         }
+        fn identify(&self) {
+            self.note("identify".into());
+        }
     }
 
     fn setup() -> (Arc<Recorder>, Dispatcher) {
@@ -132,6 +136,7 @@ mod tests {
             dispatcher.handle(&message("intent.behavior", json!({"behavior": "speaking"}))),
             dispatcher.handle(&message("intent.expression", json!({"expression": "joy", "intensity": 0.8}))),
             dispatcher.handle(&message("intent.beat", json!({}))),
+            dispatcher.handle(&message("intent.identify", json!({}))),
         ];
         for reply in replies {
             let ack = acked(reply);
@@ -139,7 +144,16 @@ mod tests {
         }
         assert_eq!(
             body.calls(),
-            ["heartbeat", "behavior speaking", "heartbeat", "expression joy 0.8", "heartbeat", "beat"]
+            [
+                "heartbeat",
+                "behavior speaking",
+                "heartbeat",
+                "expression joy 0.8",
+                "heartbeat",
+                "beat",
+                "heartbeat",
+                "identify"
+            ]
         );
     }
 

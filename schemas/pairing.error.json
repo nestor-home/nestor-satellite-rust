@@ -1,0 +1,39 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://nestor.mathislambert.fr/schemas/satellite/2/pairing.error.json",
+  "title": "Error answer of the pairing endpoints",
+  "x-protocol": "nestor.satellite/2",
+  "type": "object",
+  "properties": {
+    "error": {
+      "enum": [
+        "invalid_request",
+        "protocol_unsupported",
+        "too_many_pending",
+        "too_many_attempts",
+        "enrollment_refused",
+        "not_pending"
+      ]
+    },
+    "detail": {
+      "type": "string"
+    },
+    "reason": {
+      "enum": [
+        "unknown",
+        "expired",
+        "used",
+        "cancelled"
+      ]
+    },
+    "retry_after_s": {
+      "type": "integer",
+      "minimum": 0
+    }
+  },
+  "required": [
+    "error",
+    "detail"
+  ],
+  "additionalProperties": false
+}

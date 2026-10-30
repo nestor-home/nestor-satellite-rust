@@ -1,12 +1,12 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://nestor.mathislambert.fr/schemas/satellite/1/manifest.json",
+  "$id": "https://nestor.mathislambert.fr/schemas/satellite/2/manifest.json",
   "title": "Satellite manifest",
-  "x-protocol": "nestor.satellite/1",
+  "x-protocol": "nestor.satellite/2",
   "type": "object",
   "properties": {
     "protocol": {
-      "const": "nestor.satellite/1"
+      "const": "nestor.satellite/2"
     },
     "device": {
       "type": "object",
@@ -56,6 +56,20 @@
       ],
       "additionalProperties": false
     },
+    "pairing_methods": {
+      "type": "array",
+      "items": {
+        "enum": [
+          "device_code.display",
+          "device_code.speech",
+          "enrollment.input",
+          "enrollment.provisioning",
+          "enrollment.qr"
+        ]
+      },
+      "minItems": 1,
+      "uniqueItems": true
+    },
     "capabilities": {
       "type": "array",
       "maxItems": 32,
@@ -75,7 +89,8 @@
   },
   "required": [
     "protocol",
-    "device"
+    "device",
+    "pairing_methods"
   ],
   "additionalProperties": false
 }

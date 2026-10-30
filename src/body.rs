@@ -23,6 +23,12 @@ pub trait Body: Send + Sync + 'static {
     /// heartbeats stop.
     fn heartbeat(&self) {}
 
+    /// A person asks which device this is: make it noticed for a few seconds with the outputs it
+    /// has (blink, wiggle, chime, flash the screen). Called while it waits to be paired, and once
+    /// paired on `intent.identify`; declare `device.identify` ([`IDENTIFY`](crate::IDENTIFY)) to
+    /// receive it. By default nothing.
+    fn identify(&self) {}
+
     /// The link to the core came up (welcomed) or went down.
     fn connected(&self, _up: bool) {}
 }

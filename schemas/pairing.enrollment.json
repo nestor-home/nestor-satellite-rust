@@ -1,0 +1,26 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://nestor.mathislambert.fr/schemas/satellite/2/pairing.enrollment.json",
+  "title": "POST /satellites/pairings/{pairing_id}/enrollment: a pending device's code",
+  "x-protocol": "nestor.satellite/2",
+  "type": "object",
+  "properties": {
+    "enrollment_code": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 32
+    },
+    "method": {
+      "enum": [
+        "enrollment.input",
+        "enrollment.provisioning",
+        "enrollment.qr"
+      ]
+    }
+  },
+  "required": [
+    "enrollment_code",
+    "method"
+  ],
+  "additionalProperties": false
+}

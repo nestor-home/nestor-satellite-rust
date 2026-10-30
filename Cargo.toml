@@ -32,6 +32,7 @@ cli = ["audio", "dep:clap", "dep:gethostname", "dep:tracing-subscriber"]
 async-trait = "0.1.92"
 bytes = "1.12.1"
 chrono = { version = "0.4.45", default-features = false, features = ["clock", "std"] }
+fluent-bundle = "0.16.0"
 opus = "0.4.0"
 reqwest = { version = "0.12.28", default-features = false, features = ["json", "rustls-tls"] }
 rtc = { version = "0.21.1", default-features = false }
@@ -40,6 +41,7 @@ serde_json = "1.0.154"
 thiserror = "2.0.21"
 tokio = { version = "1.54.1", features = ["rt-multi-thread", "macros", "time", "sync", "signal"] }
 tracing = "0.1.44"
+unic-langid = "0.9.6"
 uuid = { version = "1.29.0", features = ["v4"] }
 webrtc = "0.21.1"
 
@@ -52,6 +54,7 @@ tracing-subscriber = { version = "0.3.23", features = ["env-filter", "fmt"], opt
 axum = "0.8.9"
 jsonschema = { version = "0.60.2", default-features = false }
 tempfile = "3.27.0"
+tracing-subscriber = { version = "0.3.23", default-features = false, features = ["fmt", "std"] }
 
 [lints.rust]
 unsafe_code = "forbid"
