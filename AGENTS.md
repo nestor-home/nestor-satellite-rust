@@ -38,19 +38,18 @@ src/
 └── bin/nestor-satellite.rs   the CLI (feature `cli`)
 schemas/          JSON Schemas copied from the server (do not edit by hand)
 voice/            recorded clips of the spoken device code, copied from nestor-satellite-python
-scripts/conformance.py        runs the server's conformance suite against the binary
 examples/         the README's drivers (led.rs, screen.rs), compiled by clippy
 tests/            schemas, fake-core client tests, conformance
 ```
 
 ## Rules
 
-1. **Never depend on the server.** The server owns the protocol; this crate follows it. The Nestor
-   repository is only used by the conformance test, next to this one (`../nestor`).
-2. **Refreshing the schemas.** `schemas/` is a copy of
-   `../nestor/src/nestor/modules/satellites/schemas/`.
-   The standard itself is `../nestor/docs/satellite-protocol.md` (rules N1, P1-P8, I1-I3, W1-W4).
-   To refresh: `cp ../nestor/src/nestor/modules/satellites/schemas/*.json schemas/`, then adapt
+1. **Never depend on the server.** The server owns the protocol; this crate follows it. The server
+   is only used by the conformance test, as the published `nestor-home` package (`.nestor-version`).
+2. **Refreshing the schemas.** `schemas/` is a copy of `src/nestor/modules/satellites/schemas/` in
+   nestor-home/nestor. The standard itself is its `docs/satellite-protocol.md` (rules N1, P1-P8,
+   I1-I3, W1-W4). To refresh, copy them from a checkout of the server at the version in
+   `.nestor-version`, then adapt
    `protocol.rs`/`wire.rs` until `cargo test` passes. Every message the SDK sends is validated
    against these schemas, and the decoder must refuse what they refuse.
 3. **Be lenient in what you read, strict in what you send.** An unknown message type from a newer
@@ -85,21 +84,26 @@ tests/            schemas, fake-core client tests, conformance
 
 ## Conformance
 
-The server's black-box suite (`nestor.adapters.channels.voice.satellites.conformance`) runs a fake
-core and launches the binary once per scenario (robot-less speaker: `audio.capture` +
+The server's black-box suite (`nestor satellites conformance`, in the published `nestor-home`
+package) runs a fake core and launches the binary once per scenario (robot-less speaker: `audio.capture` +
 `audio.playback` + `device.identify`, `--null-audio`): `{url}` is the core, `{state}` a fresh folder
 for the token, and the enrollment code comes in `NESTOR_PAIRING_URI`. It checks pairing with a
 device code and with an enrollment code, refused codes, Retry-After, identify, hello, acks, audio
 both ways and reconnection:
 
 ```bash
-(cd ../nestor && uv sync --extra voice)
 cargo test --all-features --test conformance -- --nocapture
 # or by hand:
-cargo build --features cli && ../nestor/.venv/bin/python scripts/conformance.py target/debug/nestor-satellite
+cargo build --features cli
+uvx --from "nestor-home[voice]==$(cat .nestor-version)" nestor satellites conformance --deadline 15 -- \
+  target/debug/nestor-satellite run --core {url} --room salon --id enceinte-salon --model conformance \
+  --token-file {state}/token.json --null-audio --verbose
 ```
 
-The test is skipped without the server's environment (`NESTOR_PYTHON` overrides the interpreter);
+The server's version is pinned in `.nestor-version`, the one place to bump it (deliberately, after
+reading the server's changelog). Against a local checkout of the server, replace the `--from`
+argument by `'../nestor[voice]'`. The test checks the exit status (0), that no line starts with
+`FAIL`, and a few named checks; it is skipped when `uvx` is not on the PATH, and
 `NESTOR_CONFORMANCE=required` (CI) makes that a failure.
 
 ## Code conventions
