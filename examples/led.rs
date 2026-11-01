@@ -20,6 +20,6 @@ async fn main() -> nestor_satellite::Result<()> {
     let device = Device::new("enceinte-salon", "raspberry-pi-4", "salon")?;
     let manifest = Manifest::new(device, [AUDIO_CAPTURE, AUDIO_PLAYBACK, IDENTIFY])?;
     let tokens = TokenStore::new("~/.config/nestor-satellite/enceinte-salon.json");
-    let satellite = Satellite::builder("http://nestor.local:7860", manifest, tokens).body(Led);
+    let satellite = Satellite::builder("http://nestor.local:8471", manifest, tokens).body(Led);
     satellite.source(Microphone::new()).sink(Speaker::new()).build()?.run().await // pairs once, then reconnects
 }

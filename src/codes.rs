@@ -3,7 +3,7 @@
 //! An enrollment code is 8 symbols of Crockford's base32 (`K7QF2M9X`), shown grouped by four
 //! (`K7QF-2M9X`). Reading it forgives case, dashes, spaces, and the letters Crockford maps to digits
 //! (`O` → `0`, `I` and `L` → `1`). A pairing URI carries the core's address with the code:
-//! `nestor+http://nestor.local:7860/?code=K7QF2M9X`.
+//! `nestor+http://nestor.local:8471/?code=K7QF2M9X`.
 
 use std::fmt;
 use std::str::FromStr;
@@ -80,7 +80,7 @@ pub struct PairingUri {
 }
 
 impl PairingUri {
-    /// `nestor+http://nestor.local:7860/?code=K7QF2M9X` → `http://nestor.local:7860` and `K7QF2M9X`.
+    /// `nestor+http://nestor.local:8471/?code=K7QF2M9X` → `http://nestor.local:8471` and `K7QF2M9X`.
     pub fn parse(uri: &str) -> Result<Self, ProtocolError> {
         let wrong = || ProtocolError::new("a pairing URI looks like nestor+http://host:port/?code=K7QF2M9X");
         let uri = uri.trim();
@@ -98,7 +98,7 @@ impl PairingUri {
         Ok(Self { core: base_url(url.as_str()).map_err(|_| wrong())?, code: EnrollmentCode::parse(code)? })
     }
 
-    /// The core's base URL (`http://nestor.local:7860`).
+    /// The core's base URL (`http://nestor.local:8471`).
     pub fn core(&self) -> &str {
         &self.core
     }
@@ -212,8 +212,8 @@ mod tests {
 
     #[test]
     fn a_pairing_uri_gives_the_core_s_base_url_and_the_code() {
-        let uri = PairingUri::parse("nestor+http://nestor.local:7860/?code=K7QF2M9X").unwrap();
-        assert_eq!((uri.core(), uri.code().as_str()), ("http://nestor.local:7860", "K7QF2M9X"));
+        let uri = PairingUri::parse("nestor+http://nestor.local:8471/?code=K7QF2M9X").unwrap();
+        assert_eq!((uri.core(), uri.code().as_str()), ("http://nestor.local:8471", "K7QF2M9X"));
         let uri = PairingUri::parse("NESTOR+HTTPS://nestor.example.org/satellites-proxy/?code=k7qf-2m9x").unwrap();
         assert_eq!((uri.core(), uri.code().as_str()), ("https://nestor.example.org/satellites-proxy", "K7QF2M9X"));
         let uri = PairingUri::parse("nestor+http://127.0.0.1:9/?code=K7QF%202M9X").unwrap();
@@ -223,11 +223,11 @@ mod tests {
     #[test]
     fn a_uri_without_the_nestor_scheme_or_a_single_valid_code_is_refused() {
         for wrong in [
-            "http://nestor.local:7860/?code=K7QF2M9X",
+            "http://nestor.local:8471/?code=K7QF2M9X",
             "nestor+ftp://nestor.local/?code=K7QF2M9X",
-            "nestor+http://nestor.local:7860/",
-            "nestor+http://nestor.local:7860/?code=K7QF2M9X&code=K7QF2M9X",
-            "nestor+http://nestor.local:7860/?code=nope",
+            "nestor+http://nestor.local:8471/",
+            "nestor+http://nestor.local:8471/?code=K7QF2M9X&code=K7QF2M9X",
+            "nestor+http://nestor.local:8471/?code=nope",
             "nestor+http:///?code=K7QF2M9X",
         ] {
             assert!(PairingUri::parse(wrong).is_err(), "{wrong}");
@@ -236,17 +236,17 @@ mod tests {
 
     #[test]
     fn an_enrollment_is_a_pairing_uri_or_a_code_alone() {
-        let from_uri = Enrollment::parse("nestor+http://nestor.local:7860/?code=K7QF2M9X").unwrap();
-        assert_eq!(from_uri.core(), Some("http://nestor.local:7860"));
+        let from_uri = Enrollment::parse("nestor+http://nestor.local:8471/?code=K7QF2M9X").unwrap();
+        assert_eq!(from_uri.core(), Some("http://nestor.local:8471"));
         let alone = Enrollment::parse("K7QF-2M9X").unwrap();
         assert_eq!((alone.core(), alone.code().as_str()), (None, "K7QF2M9X"));
     }
 
     #[test]
     fn a_core_s_address_is_compared_without_trailing_slash() {
-        assert_eq!(base_url("http://Nestor.local:7860/").unwrap(), "http://nestor.local:7860");
+        assert_eq!(base_url("http://Nestor.local:8471/").unwrap(), "http://nestor.local:8471");
         assert_eq!(base_url("https://h/proxy/").unwrap(), "https://h/proxy");
-        assert!(base_url("nestor.local:7860").is_err());
+        assert!(base_url("nestor.local:8471").is_err());
         assert!(base_url("ftp://h").is_err());
     }
 }

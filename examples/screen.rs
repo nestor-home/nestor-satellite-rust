@@ -20,7 +20,7 @@ async fn main() -> nestor_satellite::Result<()> {
     let device = Device::new("ecran-cuisine", "raspberry-pi-zero", "cuisine")?;
     let manifest = Manifest::new(device, [AUDIO_PLAYBACK, IDENTIFY])?;
     let tokens = TokenStore::new("~/.config/nestor-satellite/ecran-cuisine.json");
-    let satellite = Satellite::builder("http://nestor.local:7860", manifest, tokens)
+    let satellite = Satellite::builder("http://nestor.local:8471", manifest, tokens)
         .display(Screen) // declares device_code.display
         .accepts_enrollment(EnrollmentMethod::Input) // declares enrollment.input
         .build()?;

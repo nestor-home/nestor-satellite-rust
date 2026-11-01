@@ -9,7 +9,7 @@
 //! let device = Device::new("enceinte-salon", "raspberry-pi-4", "salon")?;
 //! let manifest = Manifest::new(device, [AUDIO_CAPTURE, AUDIO_PLAYBACK])?;
 //! let tokens = TokenStore::new("~/.config/nestor-satellite/enceinte-salon.json");
-//! Satellite::builder("http://nestor.local:7860", manifest, tokens).build()?.run().await
+//! Satellite::builder("http://nestor.local:8471", manifest, tokens).build()?.run().await
 //! # }
 //! ```
 

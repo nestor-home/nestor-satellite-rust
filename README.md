@@ -34,7 +34,7 @@ async fn main() -> nestor_satellite::Result<()> {
     let device = Device::new("enceinte-salon", "raspberry-pi-4", "salon")?;
     let manifest = Manifest::new(device, [AUDIO_CAPTURE, AUDIO_PLAYBACK, IDENTIFY])?;
     let tokens = TokenStore::new("~/.config/nestor-satellite/enceinte-salon.json");
-    let satellite = Satellite::builder("http://nestor.local:7860", manifest, tokens).body(Led);
+    let satellite = Satellite::builder("http://nestor.local:8471", manifest, tokens).body(Led);
     satellite.source(Microphone::new()).sink(Speaker::new()).build()?.run().await // pairs once, then reconnects
 }
 ```
@@ -43,7 +43,7 @@ The command, with nothing to write (a microphone and a speaker):
 
 ```bash
 cargo install nestor-satellite --features cli
-NESTOR_PAIRING_URI='nestor+http://nestor.local:7860/?code=K7QF2M9X' nestor-satellite run --room salon
+NESTOR_PAIRING_URI='nestor+http://nestor.local:8471/?code=K7QF2M9X' nestor-satellite run --room salon
 ```
 
 Building needs Rust 1.91+, a C compiler and `cmake`; on Linux the `audio` feature also needs ALSA
