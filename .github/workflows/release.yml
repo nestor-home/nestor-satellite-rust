@@ -1,0 +1,35 @@
+# Release pull request on every push to main; when it is merged, publishes the crate to
+# crates.io through trusted publishing (environment `crates-io`).
+name: Release
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  release:
+    uses: nestor-home/.github/.github/workflows/release-please.yml@v1
+
+  crates-io:
+    needs: release
+    if: needs.release.outputs.release_created == 'true'
+    runs-on: ubuntu-latest
+    environment: crates-io
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.release.outputs.tag_name }}
+      - uses: dtolnay/rust-toolchain@stable
+      - run: sudo apt-get update && sudo apt-get install -y libasound2-dev pkg-config
+      - id: auth
+        uses: rust-lang/crates-io-auth-action@v1
+      - run: cargo publish
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ steps.auth.outputs.token }}

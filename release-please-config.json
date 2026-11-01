@@ -1,0 +1,12 @@
+{
+  "$schema": "https://raw.githubusercontent.com/googleapis/release-please/main/schemas/config.json",
+  "bootstrap-sha": "47099e3a77e634932e97ed2eb03ca3b44ffdc5f1",
+  "packages": {
+    ".": {
+      "release-type": "rust",
+      "package-name": "nestor-satellite",
+      "include-component-in-tag": false,
+      "bump-minor-pre-major": true
+    }
+  }
+}
