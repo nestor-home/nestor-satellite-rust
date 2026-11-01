@@ -50,7 +50,6 @@ struct Saved {
     device_id: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     token: Option<String>,
-    #[serde(default)]
     refused: BTreeMap<String, String>,
 }
 
@@ -128,7 +127,7 @@ impl TokenStore {
         }
         let mut file = open_private(&self.path)?;
         file.write_all(&serde_json::to_vec(saved)?)?;
-        restrict(&self.path) // an older file may have been more open
+        restrict(&self.path) // whoever made the file, only its owner reads it
     }
 }
 
