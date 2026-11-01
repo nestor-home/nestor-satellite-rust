@@ -1,4 +1,5 @@
-//! The README's screen: it shows its device code and takes enrollment codes typed on its keypad.
+//! The screen of https://nestorhome.dev/docs/sdks/rust/: it shows its device code and takes enrollment
+//! codes typed on its keypad.
 use nestor_satellite::{AUDIO_PLAYBACK, Device, Display, EnrollmentMethod, IDENTIFY, Manifest, Satellite, TokenStore};
 
 struct Screen;

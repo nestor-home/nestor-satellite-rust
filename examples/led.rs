@@ -1,4 +1,5 @@
-//! The README's driver: a speaker that shows the assistant's attitude.
+//! The minimal driver of the README and of https://nestorhome.dev/docs/sdks/rust/: a speaker that shows
+//! the assistant's attitude.
 use nestor_satellite::devices::{Microphone, Speaker};
 use nestor_satellite::{
     AUDIO_CAPTURE, AUDIO_PLAYBACK, Behavior, Body, Device, IDENTIFY, Manifest, Satellite, TokenStore,

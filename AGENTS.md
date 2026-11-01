@@ -38,7 +38,7 @@ src/
 └── bin/nestor-satellite.rs   the CLI (feature `cli`)
 schemas/          JSON Schemas copied from the server (do not edit by hand)
 voice/            recorded clips of the spoken device code, copied from nestor-satellite-python
-examples/         the README's drivers (led.rs, screen.rs), compiled by clippy
+examples/         the drivers the README and the documentation show (led.rs, screen.rs), compiled by clippy
 tests/            schemas, fake-core client tests, conformance
 ```
 
@@ -46,10 +46,10 @@ tests/            schemas, fake-core client tests, conformance
 
 1. **Never depend on the server.** The server owns the protocol; this crate follows it. The server
    is only used by the conformance test, as the published `nestor-home` package (`.nestor-version`).
-2. **Refreshing the schemas.** `schemas/` is a copy of `src/nestor/modules/satellites/schemas/` in
-   nestor-home/nestor. The standard itself is its `docs/satellite-protocol.md` (rules N1, P1-P8,
-   I1-I3, W1-W4). To refresh, copy them from a checkout of the server at the version in
-   `.nestor-version`, then adapt
+2. **Refreshing the schemas.** `schemas/` is a copy of the schemas of the `nestor-home` release in
+   `.nestor-version`. The standard itself is https://nestorhome.dev/docs/satellites/protocol/ (rules N1,
+   P1-P8, I1-I3, W1-W4). To refresh:
+   `uvx --from nestor-home=="$(cat .nestor-version)" nestor satellites schemas --out schemas/`, then adapt
    `protocol.rs`/`wire.rs` until `cargo test` passes. Every message the SDK sends is validated
    against these schemas, and the decoder must refuse what they refuse.
 3. **Be lenient in what you read, strict in what you send.** An unknown message type from a newer
