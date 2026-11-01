@@ -13,6 +13,7 @@ permissions:
 jobs:
   release:
     uses: nestor-home/.github/.github/workflows/release-please.yml@main
+    secrets: inherit
 
   crates-io:
     needs: release
