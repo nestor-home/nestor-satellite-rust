@@ -127,9 +127,8 @@ Building needs Rust 1.91+, a C compiler and `cmake` (libopus is built from sourc
 cargo fmt --check && cargo clippy --all-targets --all-features -- -D warnings && cargo test --all-features
 ```
 
-The tests check the vendored schemas against the server's (`../nestor`) and run the server's
-black-box conformance suite against the `nestor-satellite` binary when the server's Python
-environment is there (`../nestor/.venv`); see [AGENTS.md](AGENTS.md).
+The tests run the server's black-box conformance suite against the `nestor-satellite` binary when
+the server's Python environment is there (`../nestor/.venv`); see [AGENTS.md](AGENTS.md).
 
 ## License
 

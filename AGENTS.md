@@ -40,15 +40,15 @@ schemas/          JSON Schemas copied from the server (do not edit by hand)
 voice/            recorded clips of the spoken device code, copied from nestor-satellite-python
 scripts/conformance.py        runs the server's conformance suite against the binary
 examples/         the README's drivers (led.rs, screen.rs), compiled by clippy
-tests/            schemas, fake-core client tests, conformance, voice drift
+tests/            schemas, fake-core client tests, conformance
 ```
 
 ## Rules
 
 1. **Never depend on the server.** The server owns the protocol; this crate follows it. The Nestor
-   repository is only used by tests, next to this one (`../nestor`, or `NESTOR_REPO`).
+   repository is only used by the conformance test, next to this one (`../nestor`).
 2. **Refreshing the schemas.** `schemas/` is a copy of
-   `../nestor/src/nestor/modules/satellites/schemas/`; `tests/schemas.rs` fails when they drift.
+   `../nestor/src/nestor/modules/satellites/schemas/`.
    The standard itself is `../nestor/docs/satellite-protocol.md` (rules N1, P1-P8, I1-I3, W1-W4).
    To refresh: `cp ../nestor/src/nestor/modules/satellites/schemas/*.json schemas/`, then adapt
    `protocol.rs`/`wire.rs` until `cargo test` passes. Every message the SDK sends is validated
@@ -73,7 +73,7 @@ tests/            schemas, fake-core client tests, conformance, voice drift
 
 9. **The bundled voice is the Python SDK's.** `voice/` is a byte-identical copy of
    `../nestor-satellite-python/src/nestor_satellite/voice/` (recorded by its `scripts/voice.py`,
-   CC BY 4.0); `tests/voice.rs` fails when they drift (`NESTOR_VOICE=required` in CI). Each piece of
+   CC BY 4.0). Each piece of
    `pairing-code-spoken` between the digits has a clip: change that sentence only with new clips,
    then `cp -R ../nestor-satellite-python/src/nestor_satellite/voice/* voice/` and list new files in
    `speech.rs`. It is declared (`device_code.speech`) only for a sink given, `audio.playback`
