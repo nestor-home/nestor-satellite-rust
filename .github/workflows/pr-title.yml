@@ -9,4 +9,4 @@ permissions:
 
 jobs:
   conventional:
-    uses: nestor-home/.github/.github/workflows/pr-title.yml@v1
+    uses: nestor-home/.github/.github/workflows/pr-title.yml@main

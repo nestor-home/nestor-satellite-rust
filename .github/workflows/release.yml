@@ -12,7 +12,7 @@ permissions:
 
 jobs:
   release:
-    uses: nestor-home/.github/.github/workflows/release-please.yml@v1
+    uses: nestor-home/.github/.github/workflows/release-please.yml@main
 
   crates-io:
     needs: release
