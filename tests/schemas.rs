@@ -186,7 +186,7 @@ async fn poll(State(core): State<Arc<Recording>>) -> Json<Value> {
     if core.enrollments.lock().unwrap().is_empty() {
         return Json(json!({"status": "pending", "identify": true}));
     }
-    Json(json!({"status": "approved", "token": "nst2_x", "device_id": "enceinte-salon", "room": "salon",
+    Json(json!({"status": "approved", "token": "nst1_x", "device_id": "enceinte-salon", "room": "salon",
                 "capabilities": ["device.identify"]}))
 }
 
@@ -258,7 +258,7 @@ fn the_pairing_answers_the_sdk_reads_follow_the_schemas() {
         ("pairing.state.json", json!({"status": "pending", "identify": true})),
         (
             "pairing.state.json",
-            json!({"status": "approved", "token": "nst2_x", "device_id": "a", "room": "salon", "capabilities": []}),
+            json!({"status": "approved", "token": "nst1_x", "device_id": "a", "room": "salon", "capabilities": []}),
         ),
         ("pairing.state.json", json!({"status": "claimed"})),
         ("pairing.error.json", json!({"error": "enrollment_refused", "detail": "d", "reason": "used"})),

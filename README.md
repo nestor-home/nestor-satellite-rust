@@ -2,7 +2,7 @@
 
 Rust SDK to write **satellites** for [Nestor](https://nestorhome.dev): devices (a Raspberry Pi
 speaker, a robot, a screen) that pair with a Nestor server, stream audio over WebRTC, carry out its
-intents and report what they observe, following the `nestor.satellite/2` protocol. It does not
+intents and report what they observe, following the `nestor.satellite/1` protocol. It does not
 depend on the Nestor server.
 
 **Documentation:** [nestorhome.dev/docs/sdks/rust](https://nestorhome.dev/docs/sdks/rust/)

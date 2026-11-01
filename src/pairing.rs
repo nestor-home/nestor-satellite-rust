@@ -1,4 +1,4 @@
-//! Pairing (`nestor.satellite/2`): a person proves they mean to pair the device, and the device gets
+//! Pairing (`nestor.satellite/1`): a person proves they mean to pair the device, and the device gets
 //! its token.
 //!
 //! The proof travels either way. With an enrollment code (made in Nestor, configured or handed in),
@@ -684,8 +684,8 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let store = TokenStore::new(dir.path().join("nested/token.json"));
         assert_eq!(store.load("http://core", "a"), None);
-        store.save("http://core", "a", "nst2_secret").unwrap();
-        assert_eq!(store.load("http://core", "a").as_deref(), Some("nst2_secret"));
+        store.save("http://core", "a", "nst1_secret").unwrap();
+        assert_eq!(store.load("http://core", "a").as_deref(), Some("nst1_secret"));
         assert_eq!(store.load("http://other", "a"), None);
         assert_eq!(store.load("http://core", "b"), None);
         store.forget().unwrap();
@@ -700,7 +700,7 @@ mod tests {
         let code = EnrollmentCode::parse("K7QF-2M9X").unwrap();
         store.refuse("http://core", "a", &code, "used").unwrap();
         assert_eq!(store.load("http://core", "a"), None, "no token until paired");
-        store.save("http://core", "a", "nst2_secret").unwrap();
+        store.save("http://core", "a", "nst1_secret").unwrap();
         store.forget().unwrap();
         assert_eq!(store.load("http://core", "a"), None);
         assert_eq!(store.refusal("http://core", "a", &code).as_deref(), Some("used"));

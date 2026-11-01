@@ -140,10 +140,10 @@ async fn poll(State(core): State<Arc<FakeCore>>, Path(id): Path<String>) -> Json
     let polls = core.polls.fetch_add(1, Ordering::SeqCst);
     let approved = core.approved.lock().unwrap().contains(&id);
     if approved || (!core.never_approve && polls >= core.pending) {
-        if core.offers().contains(&format!("nst2_{id}")) {
+        if core.offers().contains(&format!("nst1_{id}")) {
             return Json(json!({"status": "claimed"}));
         }
-        return Json(json!({"status": "approved", "token": format!("nst2_{id}"), "device_id": "enceinte-salon",
+        return Json(json!({"status": "approved", "token": format!("nst1_{id}"), "device_id": "enceinte-salon",
                            "room": "salon", "capabilities": ["audio.capture"]}));
     }
     if core.identify && polls == 0 {
@@ -157,7 +157,7 @@ async fn offer(State(core): State<Arc<FakeCore>>, headers: HeaderMap, Json(body)
     assert!(body["sdp"].as_str().unwrap().contains("m=application"), "the data channel is offered");
     let token = headers["authorization"].to_str().unwrap().trim_start_matches("Bearer ").to_owned();
     core.offers.lock().unwrap().push(token.clone());
-    if token.starts_with("nst2_p") { StatusCode::SERVICE_UNAVAILABLE } else { StatusCode::UNAUTHORIZED }
+    if token.starts_with("nst1_p") { StatusCode::SERVICE_UNAVAILABLE } else { StatusCode::UNAUTHORIZED }
 }
 
 fn manifest() -> Manifest {
@@ -248,8 +248,8 @@ async fn the_device_code_is_shown_and_said_twice_digit_by_digit_until_it_is_type
         sent["manifest"]["pairing_methods"],
         json!(["device_code.display", "device_code.speech", "enrollment.provisioning"])
     );
-    assert_eq!(tokens.load(&url, "enceinte-salon").as_deref(), Some("nst2_p1"), "the token is kept");
-    assert_eq!(core.offers(), ["nst2_p1"]);
+    assert_eq!(tokens.load(&url, "enceinte-salon").as_deref(), Some("nst1_p1"), "the token is kept");
+    assert_eq!(core.offers(), ["nst1_p1"]);
 }
 
 #[tokio::test]
@@ -259,7 +259,7 @@ async fn without_display_or_voice_only_provisioning_is_declared_and_the_device_c
     let satellite = builder(&url, &tokens).build().unwrap();
     assert_eq!(satellite.manifest().to_json()["pairing_methods"], json!(["enrollment.provisioning"]));
     satellite.run_until(wait_for(|| !core.offers().is_empty())).await.unwrap();
-    assert_eq!(core.offers(), ["nst2_p1"], "paired with the device code read in the log");
+    assert_eq!(core.offers(), ["nst1_p1"], "paired with the device code read in the log");
 }
 
 #[tokio::test]
@@ -284,7 +284,7 @@ async fn a_configured_enrollment_code_pairs_at_once_without_presenting_a_device_
     let sent = &core.requests()[0];
     assert_eq!((&sent["enrollment_code"], &sent["method"]), (&json!("K7QF2M9X"), &json!("enrollment.provisioning")));
     assert_eq!(outputs.noted(), ["clear"], "no device code presented");
-    assert_eq!(core.offers(), ["nst2_p1"]);
+    assert_eq!(core.offers(), ["nst1_p1"]);
 }
 
 #[tokio::test]
@@ -314,7 +314,7 @@ async fn a_refused_enrollment_code_is_said_once_never_sent_again_and_the_device_
             "clear",
         ]
     );
-    assert_eq!(core.offers(), ["nst2_p2"]);
+    assert_eq!(core.offers(), ["nst1_p2"]);
 }
 
 #[tokio::test]
@@ -339,7 +339,7 @@ async fn a_code_typed_while_pending_is_sent_by_its_method_and_pairs() {
     satellite.run_until(typing).await.unwrap();
 
     assert_eq!(core.enrollments(), [json!({"enrollment_code": "K7QF2M9X", "method": "enrollment.input"})]);
-    assert_eq!(core.offers(), ["nst2_p1"]);
+    assert_eq!(core.offers(), ["nst1_p1"]);
     assert_eq!(outputs.noted().last().map(String::as_str), Some("clear"), "the code is no longer shown");
     assert!(!enroller.is_pairing());
 }
@@ -361,7 +361,7 @@ async fn when_the_device_code_won_the_race_the_token_still_comes() {
     };
     satellite.run_until(scanning).await.unwrap();
     assert_eq!(core.enrollments().len(), 1);
-    assert_eq!(core.offers(), ["nst2_p1"]);
+    assert_eq!(core.offers(), ["nst1_p1"]);
     assert_eq!(outputs.count("message"), 0, "a lost race is no refusal");
 }
 
@@ -427,7 +427,7 @@ async fn a_refused_enrollment_code_is_kept_and_never_sent_again_after_a_restart(
     assert_eq!(tokens.load(&url, "enceinte-salon"), None);
 
     let restarted = builder(&url, &tokens).enrollment(code()).build().unwrap();
-    restarted.run_until(wait_for(|| core.offers().iter().any(|t| t == "nst2_p3"))).await.unwrap();
+    restarted.run_until(wait_for(|| core.offers().iter().any(|t| t == "nst1_p3"))).await.unwrap();
     assert_eq!(core.coded_requests(), 1, "the same code, configured again, is not sent again");
     assert_eq!(core.requests().len(), 3, "the restarted device asked for a device code at once");
 }
@@ -523,16 +523,16 @@ async fn shutting_down_while_pending_stops_waiting_for_a_code() {
 async fn a_refused_token_is_forgotten_and_the_device_pairs_again() {
     let (url, core) = FakeCore::default().serve().await;
     let (_dir, tokens) = tokens();
-    tokens.save(&url, "enceinte-salon", "nst2_from-another-life").unwrap();
+    tokens.save(&url, "enceinte-salon", "nst1_from-another-life").unwrap();
     let outputs = Outputs::default();
     let satellite = builder(&url, &tokens).display(outputs.clone()).build().unwrap();
     satellite.run_until(wait_for(|| core.offers().len() >= 3)).await.unwrap();
 
     let offers = core.offers();
-    assert_eq!(offers[0], "nst2_from-another-life");
-    assert!(offers[1..].iter().all(|t| t == "nst2_p1"), "then the new token, retried: {offers:?}");
+    assert_eq!(offers[0], "nst1_from-another-life");
+    assert!(offers[1..].iter().all(|t| t == "nst1_p1"), "then the new token, retried: {offers:?}");
     assert_eq!(outputs.count("show"), 1, "paired once");
-    assert_eq!(tokens.load(&url, "enceinte-salon").as_deref(), Some("nst2_p1"));
+    assert_eq!(tokens.load(&url, "enceinte-salon").as_deref(), Some("nst1_p1"));
 }
 
 #[derive(Clone, Default)]

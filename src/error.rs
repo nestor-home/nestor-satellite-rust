@@ -9,7 +9,7 @@ use crate::protocol::{PairingMethod, ProtocolError};
 #[derive(Debug, Error)]
 #[non_exhaustive]
 pub enum Error {
-    /// A value or a message does not follow `nestor.satellite/2`.
+    /// A value or a message does not follow `nestor.satellite/1`.
     #[error(transparent)]
     Protocol(#[from] ProtocolError),
     /// An observation the device did not declare, or the household did not allow.

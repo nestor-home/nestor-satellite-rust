@@ -21,7 +21,7 @@ pin them to a full version, and commit `Cargo.lock`.
 
 ```text
 src/
-├── protocol.rs   values of nestor.satellite/2: Device, Sdk, Capability, Manifest, PairingMethod, Behavior…
+├── protocol.rs   values of nestor.satellite/1: Device, Sdk, Capability, Manifest, PairingMethod, Behavior…
 ├── wire.rs       the JSON envelope: messages the satellite sends, strict decoding of what the core sends
 ├── codes.rs      enrollment codes (Crockford base32, normalised) and pairing URIs (nestor+http…)
 ├── pairing.rs    the pairing flow (device code, enrollment codes, refusals, Retry-After), Display, Voice,

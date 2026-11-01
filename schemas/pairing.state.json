@@ -1,8 +1,8 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://nestorhome.dev/schemas/satellite/2/pairing.state.json",
+  "$id": "https://nestorhome.dev/schemas/satellite/1/pairing.state.json",
   "title": "GET /satellites/pairings/{pairing_id}: where a pairing stands",
-  "x-protocol": "nestor.satellite/2",
+  "x-protocol": "nestor.satellite/1",
   "type": "object",
   "properties": {
     "status": {

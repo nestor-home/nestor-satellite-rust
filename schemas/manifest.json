@@ -1,12 +1,12 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://nestorhome.dev/schemas/satellite/2/manifest.json",
+  "$id": "https://nestorhome.dev/schemas/satellite/1/manifest.json",
   "title": "Satellite manifest",
-  "x-protocol": "nestor.satellite/2",
+  "x-protocol": "nestor.satellite/1",
   "type": "object",
   "properties": {
     "protocol": {
-      "const": "nestor.satellite/2"
+      "const": "nestor.satellite/1"
     },
     "device": {
       "type": "object",
