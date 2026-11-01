@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://nestor.mathislambert.fr/schemas/satellite/2/pairing.error.json",
+  "$id": "https://nestorhome.dev/schemas/satellite/2/pairing.error.json",
   "title": "Error answer of the pairing endpoints",
   "x-protocol": "nestor.satellite/2",
   "type": "object",
