@@ -1,0 +1,32 @@
+# Prebuilt `nestor-satellite` binaries attached to each GitHub Release, with a shell installer.
+# release-please creates the tag and the release; dist only builds and uploads (create-release =
+# false). dist always writes its workflow as release.yml, which release-please and crates.io
+# already own: after `dist generate`, move it to binaries.yml and restore release.yml (see README).
+[workspace]
+members = ["cargo:."]
+
+[dist]
+cargo-dist-version = "0.33.1"
+ci = "github"
+installers = ["shell"]
+targets = ["aarch64-apple-darwin", "x86_64-apple-darwin", "x86_64-unknown-linux-gnu", "aarch64-unknown-linux-gnu"]
+# The binary needs the `cli` feature.
+features = ["cli"]
+install-path = "CARGO_HOME"
+install-updater = false
+# Attach to the release release-please made, on its tag push.
+create-release = false
+# Pull requests check the plan only.
+pr-run-mode = "plan"
+# The workflow lives in binaries.yml, not where dist looks for it.
+allow-dirty = ["ci"]
+
+[dist.github-custom-runners]
+# Native arm64 Linux (Raspberry Pi) rather than a cross build; 22.04 for glibc 2.35, which
+# Raspberry Pi OS 12 (glibc 2.36) runs. 24.04 would ask for 2.39.
+aarch64-unknown-linux-gnu = "ubuntu-22.04-arm"
+
+# ALSA for cpal; libopus is built with cmake, preinstalled on GitHub's runners.
+[dist.dependencies.apt]
+libasound2-dev = "*"
+pkg-config = "*"

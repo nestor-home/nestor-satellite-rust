@@ -101,7 +101,6 @@ With nothing to write, a microphone + speaker satellite (`nestor-satellite devic
 cards). Headless, it pairs with the pairing URI made in the admin:
 
 ```bash
-cargo install --git https://github.com/nestor-home/nestor-satellite-rust --features cli
 NESTOR_PAIRING_URI='nestor+http://nestor.local:7860/?code=K7QF2M9X' nestor-satellite run --room salon
 # or
 nestor-satellite run --room salon --pairing-uri 'nestor+http://nestor.local:7860/?code=K7QF2M9X'
@@ -109,6 +108,23 @@ nestor-satellite run --room salon --pairing-uri 'nestor+http://nestor.local:7860
 
 Without a code, `nestor-satellite run --core http://nestor.local:7860 --room salon` says a device
 code through the speaker and logs it, to type in the admin. `--language fr` speaks French.
+
+### Install the CLI
+
+Each [GitHub Release](https://github.com/nestor-home/nestor-satellite-rust/releases) carries
+prebuilt binaries for macOS (Apple silicon, Intel) and Linux (x86_64, arm64 such as a Raspberry Pi
+with a 64-bit system, glibc 2.35+), and an installer that puts `nestor-satellite` in `~/.cargo/bin`:
+
+```bash
+curl --proto '=https' --tlsv1.2 -LsSf https://github.com/nestor-home/nestor-satellite-rust/releases/latest/download/nestor-satellite-installer.sh | sh
+```
+
+On Linux the binary uses ALSA (`apt install libasound2`, already there on Raspberry Pi OS). Or build
+it from crates.io:
+
+```bash
+cargo install nestor-satellite --features cli
+```
 
 Building needs Rust 1.91+, a C compiler and `cmake` (libopus is built from source); on Linux the
 `audio` feature also needs ALSA (`apt install libasound2-dev pkg-config`).
@@ -129,6 +145,16 @@ cargo fmt --check && cargo clippy --all-targets --all-features -- -D warnings &&
 
 The tests run the server's black-box conformance suite against the `nestor-satellite` binary when
 the server's Python environment is there (`../nestor/.venv`); see [AGENTS.md](AGENTS.md).
+
+## Releases
+
+release-please (`release.yml`) opens the release pull request; merging it tags `vX.Y.Z`, creates
+the GitHub Release and publishes the crate. The tag push runs `binaries.yml`, made by
+[dist](https://opensource.axo.dev/cargo-dist/) from `dist-workspace.toml`, which builds the binaries
+and attaches them to that release. dist always writes its workflow as `release.yml`: after changing
+`dist-workspace.toml`, comment out `allow-dirty`, run `dist generate`, move the new `release.yml`
+to `binaries.yml` (named "Binaries"), restore `release.yml` with `git checkout`, and put
+`allow-dirty` back; `dist plan` must pass.
 
 ## License
 

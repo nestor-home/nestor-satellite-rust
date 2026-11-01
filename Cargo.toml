@@ -70,3 +70,8 @@ panic = "deny"
 [[example]]
 name = "led"
 required-features = ["audio"]
+
+# The profile that 'dist' will build with
+[profile.dist]
+inherits = "release"
+lto = "thin"
