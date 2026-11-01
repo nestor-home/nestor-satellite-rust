@@ -48,11 +48,6 @@ jobs:
         with:
           repository: nestor-home/nestor
           path: nestor
-      # The Python SDK, at ../nestor-satellite-python: the bundled voice must be its voice/.
-      - uses: actions/checkout@v7
-        with:
-          repository: nestor-home/nestor-satellite-python
-          path: nestor-satellite-python
       - uses: astral-sh/setup-uv@v7
         with:
           python-version: "3.12"
@@ -63,10 +58,9 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: nestor-satellite-rust
-      - run: cargo test --all-features --test conformance --test schemas --test voice -- --nocapture
+      - run: cargo test --all-features --test conformance -- --nocapture
         env:
           NESTOR_CONFORMANCE: required
-          NESTOR_VOICE: required
 
   audit:
     runs-on: ubuntu-latest

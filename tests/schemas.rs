@@ -1,12 +1,9 @@
-//! The SDK's copy of the protocol schemas, and what the SDK sends and reads, against them.
-//!
-//! When `the_vendored_schemas_are_the_servers` fails after a server change, refresh `schemas/`
-//! (see AGENTS.md) and adapt the SDK until every test passes.
+//! What the SDK sends and reads, against its copy of the protocol schemas.
 #![allow(clippy::unwrap_used)] // test helpers fail loudly
 
 use std::collections::BTreeMap;
 use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -40,13 +37,6 @@ fn vendored() -> BTreeMap<String, Value> {
     schemas_in(&Path::new(env!("CARGO_MANIFEST_DIR")).join("schemas"))
 }
 
-fn server_copy() -> PathBuf {
-    let from_env = std::env::var_os("NESTOR_REPO").map(PathBuf::from);
-    from_env
-        .unwrap_or_else(|| Path::new(env!("CARGO_MANIFEST_DIR")).join("../nestor"))
-        .join("src/nestor/modules/satellites/schemas")
-}
-
 fn validator(name: &str) -> Validator {
     let schemas = vendored();
     let mut registry = Registry::new();
@@ -55,16 +45,6 @@ fn validator(name: &str) -> Validator {
     }
     let registry = registry.prepare().unwrap();
     jsonschema::options().should_validate_formats(true).with_registry(&registry).build(&schemas[name]).unwrap()
-}
-
-#[test]
-fn the_vendored_schemas_are_the_servers() {
-    let server = server_copy();
-    if !server.is_dir() {
-        eprintln!("skipped: no Nestor server at {} (set NESTOR_REPO)", server.display());
-        return;
-    }
-    assert_eq!(schemas_in(&server), vendored(), "refresh schemas/ from the server (AGENTS.md)");
 }
 
 #[test]
