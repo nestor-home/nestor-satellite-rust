@@ -83,7 +83,7 @@ pub struct SatelliteBuilder {
 }
 
 impl Satellite {
-    /// A satellite of the core at `core` (`http://nestor.local:7860`), keeping its token in `tokens`.
+    /// A satellite of the core at `core` (`http://nestor.local:8471`), keeping its token in `tokens`.
     pub fn builder(core: impl Into<String>, manifest: Manifest, tokens: TokenStore) -> SatelliteBuilder {
         let core = core.into();
         let declared = manifest.capabilities().iter().map(|c| c.name().to_owned()).collect();

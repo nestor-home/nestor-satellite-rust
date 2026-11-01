@@ -1,7 +1,7 @@
 //! `nestor-satellite run`: this machine's microphone and speaker as a satellite of a Nestor core.
 //!
-//!     nestor-satellite run --core http://nestor.local:7860 --room salon
-//!     NESTOR_PAIRING_URI=nestor+http://nestor.local:7860/?code=K7QF2M9X nestor-satellite run --room salon
+//!     nestor-satellite run --core http://nestor.local:8471 --room salon
+//!     NESTOR_PAIRING_URI=nestor+http://nestor.local:8471/?code=K7QF2M9X nestor-satellite run --room salon
 //!
 //! Useful on a Raspberry Pi with a USB speakerphone. The first run pairs with the enrollment code
 //! it is given (`--pairing-uri`, `--pairing-code`, or their environment variables), else says a
@@ -38,7 +38,7 @@ enum Command {
 
 #[derive(clap::Args)]
 struct Run {
-    /// The core's voice server, e.g. http://nestor.local:7860 (default: the pairing URI's).
+    /// The core's voice server, e.g. http://nestor.local:8471 (default: the pairing URI's).
     #[arg(long, env = "NESTOR_CORE")]
     core: Option<String>,
     /// The pairing URI made in Nestor (nestor+http://host:port/?code=K7QF2M9X): the core and an
