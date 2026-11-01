@@ -1,6 +1,6 @@
 //! Write a [Nestor](https://github.com/nestor-home/nestor) satellite in Rust: pair with the core,
 //! stream audio over WebRTC, carry out its intents and report observations, following the
-//! `nestor.satellite/2` protocol.
+//! `nestor.satellite/1` protocol.
 //!
 //! ```no_run
 //! use nestor_satellite::{AUDIO_CAPTURE, AUDIO_PLAYBACK, Device, Manifest, Satellite, TokenStore};

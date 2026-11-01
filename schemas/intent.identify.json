@@ -1,8 +1,8 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://nestorhome.dev/schemas/satellite/2/intent.identify.json",
+  "$id": "https://nestorhome.dev/schemas/satellite/1/intent.identify.json",
   "title": "A person asks the device to make itself noticed for a few seconds (blink, wiggle, chime).",
-  "x-protocol": "nestor.satellite/2",
+  "x-protocol": "nestor.satellite/1",
   "x-direction": "to_satellite",
   "type": "object",
   "properties": {
