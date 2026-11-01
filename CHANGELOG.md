@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.4.0](https://github.com/nestor-home/nestor-satellite-rust/compare/v0.3.0...v0.4.0) (2026-11-01)
+
+
+### ⚠ BREAKING CHANGES
+
+* the default core URL uses port 8471.
+
+### Bug Fixes
+
+* use the core's port 8471 ([#14](https://github.com/nestor-home/nestor-satellite-rust/issues/14)) ([8ddf19a](https://github.com/nestor-home/nestor-satellite-rust/commit/8ddf19ab75d7ff643ee39ed264347e2879818166))
+
 ## [0.3.0](https://github.com/nestor-home/nestor-satellite-rust/compare/v0.2.0...v0.3.0) (2026-11-01)
 
 
