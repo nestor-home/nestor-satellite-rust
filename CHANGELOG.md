@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.5.0](https://github.com/nestor-home/nestor-satellite-rust/compare/v0.4.0...v0.5.0) (2026-11-02)
+
+
+### ⚠ BREAKING CHANGES
+
+* talk over one WebSocket link, with voice as a feature ([#18](https://github.com/nestor-home/nestor-satellite-rust/issues/18))
+
+### Features
+
+* talk over one WebSocket link, with voice as a feature ([#18](https://github.com/nestor-home/nestor-satellite-rust/issues/18)) ([cee3b8e](https://github.com/nestor-home/nestor-satellite-rust/commit/cee3b8e5d8f19010dd120e97df39ccebc4bbe0ad))
+
 ## [0.4.0](https://github.com/nestor-home/nestor-satellite-rust/compare/v0.3.0...v0.4.0) (2026-11-01)
 
 
