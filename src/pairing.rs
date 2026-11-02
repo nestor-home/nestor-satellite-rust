@@ -30,9 +30,9 @@ use tracing::{debug, error, info, warn};
 use crate::body::Body;
 use crate::codes::{Enrollment, EnrollmentCode};
 use crate::error::{Error, Result};
-use crate::i18n::{Language, digits};
+use crate::i18n::{Language, SPOKEN_CODE, digits};
 use crate::protocol::{EnrollmentMethod, Manifest, PairingMethod};
-use crate::speech::{self, SpokenCode};
+use crate::voice::SpokenCode;
 
 /// One device's state for one core, in a JSON file: its token, and the enrollment codes the core
 /// refused (their SHA-256 only), so that a restarted device never sends them again.
@@ -279,7 +279,7 @@ impl Presenter {
             display.show_code(&text, code);
         }
         if let Some(voice) = &self.voice {
-            voice.say(&self.language.say(speech::MESSAGE, &[("digits", FluentValue::from(digits(code)))]));
+            voice.say(&self.language.say(SPOKEN_CODE, &[("digits", FluentValue::from(digits(code)))]));
         } else if let Some(speech) = &self.speech {
             speech.say(code);
         }

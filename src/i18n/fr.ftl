@@ -25,4 +25,5 @@ error-method-not-declared = Cet appareil n'accepte pas de code d'enrôlement de 
 error-enrollment-code = Un code d'enrôlement compte 8 lettres et chiffres, comme K7QF-2M9X.
 error-other-core = Cette URI d'appairage est celle d'un autre Nestor.
 error-token-refused = Nestor ne connaît plus cet appareil : appairez-le à nouveau.
+error-replaced = Une autre connexion de cet appareil a pris le relais : celle-ci s'arrête.
 error-unreachable = Nestor est injoignable.

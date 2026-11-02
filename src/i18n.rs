@@ -13,6 +13,9 @@ use unic_langid::LanguageIdentifier;
 
 use crate::error::Error;
 
+/// The sentence of the catalogue that says the device code aloud.
+pub(crate) const SPOKEN_CODE: &str = "pairing-code-spoken";
+
 /// A language the satellite speaks.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 #[non_exhaustive]
@@ -63,7 +66,8 @@ impl Language {
             Error::InvalidEnrollment(_) => "error-enrollment-code",
             Error::OtherCore { .. } => "error-other-core",
             Error::TokenRefused => "error-token-refused",
-            Error::Http(_) => "error-unreachable",
+            Error::Replaced => "error-replaced",
+            Error::Http(_) | Error::WebSocket(_) => "error-unreachable",
             other => return other.to_string(),
         };
         self.say(id, &[])

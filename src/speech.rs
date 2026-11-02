@@ -20,10 +20,8 @@ use tokio::time::Instant;
 use tracing::{error, warn};
 
 use crate::audio::{AudioSink, frame_samples};
-use crate::i18n::Language;
+use crate::i18n::{Language, SPOKEN_CODE};
 
-/// The sentence of the catalogue that says the device code.
-pub(crate) const MESSAGE: &str = "pairing-code-spoken";
 /// Where the digits go, when the sentence is cut into clips.
 const SLOT: &str = "\u{0}";
 /// Around a piece of text: punctuation and Fluent's isolation marks.
@@ -111,7 +109,7 @@ impl Index {
     pub(crate) fn announcement(&self, language: Language, code: &str) -> Vec<Step> {
         let language = self.voiced(language);
         let pauses = self.pauses_ms;
-        let sentence = language.say(MESSAGE, &[("digits", FluentValue::from(SLOT))]);
+        let sentence = language.say(SPOKEN_CODE, &[("digits", FluentValue::from(SLOT))]);
         let parts: Vec<&str> = sentence.split(SLOT).collect();
         let mut steps = Vec::new();
         for (position, text) in parts.iter().enumerate() {
