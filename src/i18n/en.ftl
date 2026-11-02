@@ -25,4 +25,5 @@ error-method-not-declared = This device does not take enrollment codes that way.
 error-enrollment-code = An enrollment code is 8 letters and digits, like K7QF-2M9X.
 error-other-core = This pairing URI is for another Nestor.
 error-token-refused = Nestor no longer knows this device: pair it again.
+error-replaced = Another connection of this device took over: this one stops.
 error-unreachable = Nestor cannot be reached.

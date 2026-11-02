@@ -1,10 +1,10 @@
-//! Messages on the `nestor` data channel: one JSON envelope `{"type", "id", "at", "payload"}`.
+//! Messages on the link: one JSON envelope `{"type", "id", "at", "payload"}` per WebSocket text frame.
 //!
-//! The satellite sends `hello` first, then `ack`s and observations; the core sends `welcome` and
-//! `intent.*`. Decoding is as strict as the server's: exactly the four envelope keys, an id of 1 to
-//! 64 characters, an ISO 8601 time, and a payload without unknown fields. A message *type* this SDK
-//! does not know is not an error, though ([`Message::Unknown`]): a newer core does not break an
-//! older driver.
+//! The satellite sends `hello` first, then `ack`s, observations and typed text; the core sends
+//! `welcome` and `intent.*`. Decoding is as strict as the server's: exactly the four envelope keys,
+//! an id of 1 to 64 characters, an ISO 8601 time, and a payload without unknown fields. A message
+//! *type* this SDK does not know is not an error, though ([`Message::Unknown`]): a newer core does
+//! not break an older driver.
 
 use std::collections::BTreeSet;
 
@@ -15,13 +15,12 @@ use serde_json::{Map, Value, json};
 
 use crate::protocol::{Behavior, Expression, Manifest, ProtocolError};
 
-/// The WebRTC transport's own messages (peer left, renegotiation): not Nestor's.
-pub const SIGNALLING: &str = "signalling";
-
-/// `hello`: the first message of a connection, the device's manifest.
+/// `hello`: the first message of a link, the device's manifest and its token.
 pub const HELLO: &str = "hello";
 /// `ack`: an intent was received.
 pub const ACK: &str = "ack";
+/// `input.text`: what a person typed on the device.
+pub const INPUT_TEXT: &str = "input.text";
 /// `observation.person.detected`: people seen by the device's own detector.
 pub const PERSON_DETECTED: &str = "observation.person.detected";
 /// `observation.speech.activity`: voice activity started or stopped.
@@ -36,6 +35,13 @@ pub const INTENT_EXPRESSION: &str = "intent.expression";
 pub const INTENT_BEAT: &str = "intent.beat";
 /// `intent.identify`: a person asks the device to make itself noticed.
 pub const INTENT_IDENTIFY: &str = "intent.identify";
+/// `intent.text`: the assistant's words, to show.
+pub const INTENT_TEXT: &str = "intent.text";
+
+/// At most this many characters typed in one `input.text`.
+pub const MAX_INPUT_TEXT: usize = 4_000;
+/// At most this many characters in one `intent.text`.
+pub const MAX_INTENT_TEXT: usize = 16_000;
 
 const MAX_ID: usize = 64;
 
@@ -49,14 +55,23 @@ pub fn envelope(message_type: &str, payload: Value) -> Value {
     })
 }
 
-/// `hello {manifest}`.
-pub fn hello(manifest: &Manifest) -> Value {
-    envelope(HELLO, json!({ "manifest": manifest.to_json() }))
+/// `hello {manifest, token}`.
+pub fn hello(manifest: &Manifest, token: &str) -> Value {
+    envelope(HELLO, json!({ "manifest": manifest.to_json(), "token": token }))
 }
 
 /// `ack {of}`: the intent `intent_id` was received.
 pub fn ack(intent_id: &str) -> Value {
     envelope(ACK, json!({ "of": intent_id }))
+}
+
+/// `input.text {text}`: 1 to 4,000 characters, as typed.
+pub fn input_text(text: &str) -> Result<Value, ProtocolError> {
+    let length = text.chars().count();
+    if !(1..=MAX_INPUT_TEXT).contains(&length) {
+        return Err(ProtocolError::new(format!("typed text has 1 to {MAX_INPUT_TEXT} characters, not {length}")));
+    }
+    Ok(envelope(INPUT_TEXT, json!({ "text": text })))
 }
 
 /// `observation.person.detected {count, confidence}`; `confidence` is between 0 and 1.
@@ -82,7 +97,7 @@ pub struct Welcome {
 }
 
 /// An intent of the core, to carry out and acknowledge.
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum Intent {
     /// The assistant's attitude changed: show it until the next one.
     Behavior(Behavior),
@@ -97,6 +112,13 @@ pub enum Intent {
     Beat,
     /// A person asks the device to make itself noticed for a few seconds.
     Identify,
+    /// The assistant's words, to show (plain text, no Markdown).
+    Text {
+        /// What it says.
+        text: String,
+        /// The last message of its turn (`final`).
+        last: bool,
+    },
 }
 
 /// A message from the core.
@@ -121,40 +143,17 @@ pub struct Received {
     pub message: Message,
 }
 
-/// What arrives on the data channel.
-#[derive(Debug, Clone, PartialEq)]
-pub enum Inbound {
-    /// A Nestor message.
-    Nestor(Received),
-    /// A message of the WebRTC transport (`{"type": "signalling", "message": {"type": …}}`).
-    Signalling {
-        /// Its inner type: `peerLeft` when the core hangs up, `renegotiate`…
-        kind: Option<String>,
-    },
-}
-
-impl Inbound {
-    /// Whether the core hung up (`peerLeft`).
-    pub fn is_hang_up(&self) -> bool {
-        matches!(self, Self::Signalling { kind: Some(kind) } if kind == "peerLeft")
-    }
-}
-
-/// Read a message from the core (the text of one data channel message).
-pub fn parse(text: &str) -> Result<Inbound, ProtocolError> {
+/// Read a message from the core (the text of one WebSocket frame).
+pub fn parse(text: &str) -> Result<Received, ProtocolError> {
     let data: Value = serde_json::from_str(text).map_err(|error| ProtocolError::new(format!("not JSON: {error}")))?;
     decode(data)
 }
 
 /// Read a message from the core, already parsed as JSON.
-pub fn decode(data: Value) -> Result<Inbound, ProtocolError> {
+pub fn decode(data: Value) -> Result<Received, ProtocolError> {
     let Value::Object(mut data) = data else {
         return Err(ProtocolError::new("a message is a JSON object"));
     };
-    if data.get("type").and_then(Value::as_str) == Some(SIGNALLING) {
-        let kind = data.get("message").and_then(|m| m.get("type")).and_then(Value::as_str).map(str::to_owned);
-        return Ok(Inbound::Signalling { kind });
-    }
     let keys: BTreeSet<&str> = data.keys().map(String::as_str).collect();
     if keys != BTreeSet::from(["type", "id", "at", "payload"]) {
         return Err(ProtocolError::new("a message is an object with exactly type, id, at and payload"));
@@ -203,9 +202,19 @@ pub fn decode(data: Value) -> Result<Inbound, ProtocolError> {
             let _: EmptyPayload = payload_of(&message_type, payload)?;
             Message::Intent(Intent::Identify)
         }
+        INTENT_TEXT => {
+            let p: TextPayload = payload_of(&message_type, payload)?;
+            let length = p.text.chars().count();
+            if !(1..=MAX_INTENT_TEXT).contains(&length) {
+                return Err(ProtocolError::new(format!(
+                    "{message_type}.text has 1 to {MAX_INTENT_TEXT} characters, not {length}"
+                )));
+            }
+            Message::Intent(Intent::Text { text: p.text, last: p.r#final.unwrap_or(true) })
+        }
         _ => Message::Unknown(message_type),
     };
-    Ok(Inbound::Nestor(Received { id, at, message }))
+    Ok(Received { id, at, message })
 }
 
 #[derive(Deserialize)]
@@ -224,6 +233,13 @@ struct ExpressionPayload {
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct EmptyPayload {}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct TextPayload {
+    text: String,
+    r#final: Option<bool>,
+}
 
 fn payload_of<T: DeserializeOwned>(message_type: &str, payload: Map<String, Value>) -> Result<T, ProtocolError> {
     serde_json::from_value(Value::Object(payload))
@@ -258,10 +274,7 @@ mod tests {
     }
 
     fn nestor(text: &str) -> Received {
-        match parse(text) {
-            Ok(Inbound::Nestor(received)) => received,
-            other => panic!("not a Nestor message: {other:?}"),
-        }
+        parse(text).unwrap()
     }
 
     #[test]
@@ -291,6 +304,15 @@ mod tests {
         );
         assert_eq!(nestor(&message(INTENT_BEAT, json!({}))).message, Message::Intent(Intent::Beat));
         assert_eq!(nestor(&message(INTENT_IDENTIFY, json!({}))).message, Message::Intent(Intent::Identify));
+        assert_eq!(
+            nestor(&message(INTENT_TEXT, json!({"text": "Je regarde.", "final": false}))).message,
+            Message::Intent(Intent::Text { text: "Je regarde.".into(), last: false })
+        );
+        assert_eq!(
+            nestor(&message(INTENT_TEXT, json!({"text": "Il fait 21 °C."}))).message,
+            Message::Intent(Intent::Text { text: "Il fait 21 °C.".into(), last: true }),
+            "an unprompted message is the last of its turn"
+        );
     }
 
     #[test]
@@ -314,6 +336,10 @@ mod tests {
             message(INTENT_BEAT, json!({"x": 1})),
             message(INTENT_IDENTIFY, json!({"seconds": 5})),
             message(WELCOME, json!({"device_id": "a", "room": "b"})),
+            message(INTENT_TEXT, json!({"text": ""})),
+            message(INTENT_TEXT, json!({"text": "é".repeat(16_001)})),
+            message(INTENT_TEXT, json!({"text": "ok", "final": "yes"})),
+            message(INTENT_TEXT, json!({"text": "ok", "markdown": true})),
             json!({"type": "intent.beat", "id": "m", "at": "2026-10-30T12:00:00Z"}).to_string(),
             json!({"type": "intent.beat", "id": "m", "at": "2026-10-30T12:00:00Z", "payload": {}, "x": 1}).to_string(),
             json!({"type": "intent.beat", "id": "", "at": "2026-10-30T12:00:00Z", "payload": {}}).to_string(),
@@ -336,16 +362,7 @@ mod tests {
     }
 
     #[test]
-    fn the_transport_s_signalling_is_told_apart_and_peer_left_is_a_hang_up() {
-        let left = parse(r#"{"type": "signalling", "message": {"type": "peerLeft"}}"#).unwrap();
-        assert!(left.is_hang_up());
-        let other = parse(r#"{"type": "signalling", "message": {"type": "renegotiate"}}"#).unwrap();
-        assert!(!other.is_hang_up());
-        assert!(matches!(other, Inbound::Signalling { kind: Some(k) } if k == "renegotiate"));
-    }
-
-    #[test]
-    fn what_the_satellite_sends_has_a_fresh_id_and_a_utc_time() {
+    fn what_the_satellite_sends_has_a_fresh_id_and_a_utc_time() -> Result<(), ProtocolError> {
         let (a, b) = (ack("intent-1"), ack("intent-1"));
         assert_ne!(a["id"], b["id"]);
         assert_eq!(a["payload"], json!({"of": "intent-1"}));
@@ -354,5 +371,12 @@ mod tests {
         assert!(person_detected(1, f64::NAN).is_err());
         assert_eq!(person_detected(2, 0.5).unwrap()["payload"], json!({"count": 2, "confidence": 0.5}));
         assert_eq!(speech_activity(true)["payload"], json!({"active": true}));
+        assert_eq!(input_text("Allume le salon")?["payload"], json!({"text": "Allume le salon"}));
+        assert!(input_text("").is_err());
+        assert!(input_text(&"é".repeat(4_000)).is_ok(), "characters, not bytes");
+        assert!(input_text(&"é".repeat(4_001)).is_err());
+        let manifest = Manifest::new(crate::Device::new("a", "m", "salon")?, ["text.input"])?;
+        assert_eq!(hello(&manifest, "nst1_x")["payload"]["token"], "nst1_x");
+        Ok(())
     }
 }

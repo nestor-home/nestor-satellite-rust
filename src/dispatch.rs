@@ -1,14 +1,15 @@
-//! What the satellite does with each message from the core: hand intents to the body and
-//! acknowledge them, take note of the welcome, notice the core hanging up.
+//! What the satellite does with each message from the core: hand intents to the body or the text
+//! display and acknowledge them, take note of the welcome.
 //!
-//! It knows nothing of the transport, so a driver on another profile (a WebSocket) can reuse it.
+//! It knows nothing of the transport: a driver with a link of its own can reuse it.
 
 use std::sync::Arc;
 
 use tracing::{debug, warn};
 
 use crate::body::Body;
-use crate::wire::{self, Inbound, Intent, Message, Welcome};
+use crate::text::TextDisplay;
+use crate::wire::{self, Intent, Message, Welcome};
 
 /// What the connection has to do after a message.
 #[derive(Debug, Clone, PartialEq)]
@@ -19,33 +20,31 @@ pub enum Outcome {
     Welcomed(Welcome),
     /// Send this reply (an `ack`, as JSON text).
     Reply(String),
-    /// The transport said the core left.
-    HungUp,
 }
 
-/// Turns the core's messages into calls on a [`Body`].
+/// Turns the core's messages into calls on a [`Body`] and a [`TextDisplay`].
 #[derive(Clone)]
 pub struct Dispatcher {
     body: Arc<dyn Body>,
+    text: Option<Arc<dyn TextDisplay>>,
 }
 
 impl Dispatcher {
-    /// A dispatcher to `body`.
+    /// A dispatcher to `body`, without a text display: `intent.text` is acknowledged and dropped.
     pub fn new(body: Arc<dyn Body>) -> Self {
-        Self { body }
+        Self { body, text: None }
     }
 
-    /// Handle one data channel message (its text).
+    /// Show the assistant's words (`intent.text`) on `display`.
+    pub fn with_text(mut self, display: Arc<dyn TextDisplay>) -> Self {
+        self.text = Some(display);
+        self
+    }
+
+    /// Handle one message of the link (its text).
     pub fn handle(&self, text: &str) -> Outcome {
         let received = match wire::parse(text) {
-            Ok(Inbound::Nestor(received)) => received,
-            Ok(signalling @ Inbound::Signalling { .. }) => {
-                if signalling.is_hang_up() {
-                    return Outcome::HungUp;
-                }
-                debug!(?signalling, "transport signalling ignored");
-                return Outcome::Nothing;
-            }
+            Ok(received) => received,
             Err(error) => {
                 warn!(%error, "ignoring an off-contract message from the core");
                 return Outcome::Nothing;
@@ -64,6 +63,10 @@ impl Dispatcher {
                     Intent::Expression { expression, intensity } => self.body.expression(expression, intensity),
                     Intent::Beat => self.body.beat(),
                     Intent::Identify => self.body.identify(),
+                    Intent::Text { text, last } => match &self.text {
+                        Some(display) => display.show_text(&text, last),
+                        None => debug!("intent.text without a text display: not shown"),
+                    },
                 }
                 Outcome::Reply(wire::ack(&received.id).to_string())
             }
@@ -114,7 +117,9 @@ mod tests {
 
     fn setup() -> (Arc<Recorder>, Dispatcher) {
         let body = Arc::new(Recorder::default());
-        (body.clone(), Dispatcher::new(body))
+        let shown = body.clone();
+        let display = move |text: &str, last: bool| shown.note(format!("text {text} {last}"));
+        (body.clone(), Dispatcher::new(body).with_text(Arc::new(display)))
     }
 
     fn message(message_type: &str, payload: Value) -> String {
@@ -137,6 +142,7 @@ mod tests {
             dispatcher.handle(&message("intent.expression", json!({"expression": "joy", "intensity": 0.8}))),
             dispatcher.handle(&message("intent.beat", json!({}))),
             dispatcher.handle(&message("intent.identify", json!({}))),
+            dispatcher.handle(&message("intent.text", json!({"text": "Je regarde.", "final": false}))),
         ];
         for reply in replies {
             let ack = acked(reply);
@@ -152,7 +158,9 @@ mod tests {
                 "heartbeat",
                 "beat",
                 "heartbeat",
-                "identify"
+                "identify",
+                "heartbeat",
+                "text Je regarde. false"
             ]
         );
     }
@@ -166,13 +174,12 @@ mod tests {
     }
 
     #[test]
-    fn peer_left_is_a_hang_up_and_other_signalling_is_ignored() {
-        let (body, dispatcher) = setup();
-        let left = json!({"type": "signalling", "message": {"type": "peerLeft"}}).to_string();
-        assert_eq!(dispatcher.handle(&left), Outcome::HungUp);
-        let other = json!({"type": "signalling", "message": {"type": "renegotiate"}}).to_string();
-        assert_eq!(dispatcher.handle(&other), Outcome::Nothing);
-        assert!(body.calls().is_empty(), "signalling is not the core speaking");
+    fn without_a_text_display_the_assistant_s_words_are_still_acknowledged() {
+        let body = Arc::new(Recorder::default());
+        let dispatcher = Dispatcher::new(body.clone());
+        let ack = acked(dispatcher.handle(&message("intent.text", json!({"text": "Bonjour."}))));
+        assert_eq!(ack["payload"], json!({"of": "intent-7"}));
+        assert_eq!(body.calls(), ["heartbeat"]);
     }
 
     #[test]

@@ -14,6 +14,10 @@ use thiserror::Error;
 /// The protocol this SDK speaks.
 pub const PROTOCOL: &str = "nestor.satellite/1";
 
+/// The device sends what a person typed (`input.text`).
+pub const TEXT_INPUT: &str = "text.input";
+/// The device shows the assistant's words (`intent.text`).
+pub const TEXT_DISPLAY: &str = "text.display";
 /// The device captures audio (a microphone) and streams it to the core.
 pub const AUDIO_CAPTURE: &str = "audio.capture";
 /// The device plays the core's voice (a speaker).
@@ -386,6 +390,19 @@ impl Manifest {
             return Err(ProtocolError::new("a manifest declares at least one pairing method"));
         }
         self.pairing_methods = methods;
+        Ok(self)
+    }
+
+    /// The manifest with these capabilities declared too (those already declared are kept as they are).
+    pub(crate) fn declaring<'a>(mut self, names: impl IntoIterator<Item = &'a str>) -> Result<Self, ProtocolError> {
+        for name in names {
+            if !self.declares(name) {
+                self.capabilities.push(Capability::new(name)?);
+            }
+        }
+        if self.capabilities.len() > MAX_CAPABILITIES {
+            return Err(ProtocolError::new(format!("at most {MAX_CAPABILITIES} capabilities")));
+        }
         Ok(self)
     }
 

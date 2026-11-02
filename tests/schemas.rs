@@ -1,6 +1,8 @@
 //! What the SDK sends and reads, against its copy of the protocol schemas.
 #![allow(clippy::unwrap_used)] // test helpers fail loudly
 
+mod support;
+
 use std::collections::BTreeMap;
 use std::fs;
 use std::path::Path;
@@ -13,8 +15,8 @@ use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
 use axum::{Json, Router};
 use jsonschema::{Registry, Validator};
-use nestor_satellite::protocol::{AUDIO_CAPTURE, IDENTIFY, PERSON_DETECTION};
-use nestor_satellite::wire::{self, Inbound};
+use nestor_satellite::protocol::{IDENTIFY, PERSON_DETECTION, SPEECH_ACTIVITY};
+use nestor_satellite::wire;
 use nestor_satellite::{
     Behavior, Capability, Device, Enrollment, EnrollmentMethod, Expression, Language, Manifest, PairingMethod,
     Satellite, TokenStore,
@@ -69,7 +71,14 @@ fn the_sdk_knows_every_value_the_core_may_send() {
         .collect();
     assert_eq!(
         to_satellite,
-        [wire::INTENT_BEAT, wire::INTENT_BEHAVIOR, wire::INTENT_EXPRESSION, wire::INTENT_IDENTIFY, wire::WELCOME]
+        [
+            wire::INTENT_BEAT,
+            wire::INTENT_BEHAVIOR,
+            wire::INTENT_EXPRESSION,
+            wire::INTENT_IDENTIFY,
+            wire::INTENT_TEXT,
+            wire::WELCOME
+        ]
     );
 }
 
@@ -87,7 +96,7 @@ fn every_pairing_method_but_the_qr_code_can_be_declared_and_the_qr_code_never() 
 
 #[test]
 fn what_the_sdk_sends_follows_the_schemas() {
-    let capture = Capability::new(AUDIO_CAPTURE).unwrap().with_param("formats", json!(["opus/48000"])).unwrap();
+    let capture = Capability::new("audio.capture").unwrap().with_param("formats", json!(["opus/48000"])).unwrap();
     let detector = Capability::new(PERSON_DETECTION).unwrap().with_param("rate_hz", 10).unwrap();
     let device = Device::new("enceinte-salon", "raspberry-pi-4", "salon").unwrap().with_brand("raspberry").unwrap();
     let identify = Capability::new(IDENTIFY).unwrap();
@@ -97,8 +106,10 @@ fn what_the_sdk_sends_follows_the_schemas() {
         .unwrap();
     validator("manifest.json").validate(&manifest.to_json()).unwrap();
     let sent = [
-        wire::hello(&manifest),
+        wire::hello(&manifest, "nst1_x"),
         wire::ack("intent-1"),
+        wire::input_text("Allume la lumière du salon").unwrap(),
+        wire::input_text(&"é".repeat(4_000)).unwrap(),
         wire::person_detected(2, 0.75).unwrap(),
         wire::person_detected(0, 1.0).unwrap(),
         wire::speech_activity(true),
@@ -123,6 +134,8 @@ fn from_core() -> Vec<Value> {
         json!({"type": "intent.expression", "id": "m-4", "at": at, "payload": {"expression": "joy"}}),
         json!({"type": "intent.beat", "id": "m-5", "at": at, "payload": {}}),
         json!({"type": "intent.identify", "id": "m-6", "at": at, "payload": {}}),
+        json!({"type": "intent.text", "id": "m-7", "at": at, "payload": {"text": "Je regarde.", "final": false}}),
+        json!({"type": "intent.text", "id": "m-8", "at": at, "payload": {"text": "Il fait 21 °C."}}),
     ]
 }
 
@@ -131,7 +144,7 @@ fn the_sdk_reads_what_the_schemas_allow_the_core_to_send() {
     for message in from_core() {
         let name = format!("{}.json", message["type"].as_str().unwrap());
         assert!(validator(&name).is_valid(&message), "{message}");
-        assert!(matches!(wire::decode(message.clone()), Ok(Inbound::Nestor(_))), "{message}");
+        assert!(wire::decode(message.clone()).is_ok(), "{message}");
     }
 }
 
@@ -197,7 +210,6 @@ async fn the_pairing_bodies_the_sdk_sends_follow_the_schemas() {
         .route("/satellites/pairings", post(request))
         .route("/satellites/pairings/{id}/enrollment", post(enroll))
         .route("/satellites/pairings/{id}", get(poll))
-        .route("/satellites/{device}/offer", post(|| async { StatusCode::SERVICE_UNAVAILABLE }))
         .with_state(core.clone());
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let url = format!("http://{}", listener.local_addr().unwrap());
@@ -205,7 +217,7 @@ async fn the_pairing_bodies_the_sdk_sends_follow_the_schemas() {
 
     let dir = tempfile::tempdir().unwrap();
     let device = Device::new("enceinte-salon", "raspberry-pi-4", "salon").unwrap();
-    let manifest = Manifest::new(device, [AUDIO_CAPTURE, IDENTIFY]).unwrap();
+    let manifest = Manifest::new(device, [IDENTIFY]).unwrap();
     let tokens = TokenStore::new(dir.path().join("t.json"));
     let satellite = Satellite::builder(&url, manifest, tokens.clone())
         .language(Language::En)
@@ -268,5 +280,50 @@ fn the_pairing_answers_the_sdk_reads_follow_the_schemas() {
     ];
     for (name, answer) in answers {
         assert!(validator(name).is_valid(&answer), "{name}: {answer}");
+    }
+}
+
+#[tokio::test]
+async fn what_the_sdk_sends_on_its_link_follows_the_schemas() {
+    let script = vec![
+        support::envelope("intent.behavior", "i-1", json!({"behavior": "listening"})),
+        support::envelope("intent.text", "i-2", json!({"text": "Bonjour.", "final": true})),
+    ];
+    let (url, core) = support::FakeCore { script, ..Default::default() }.serve().await;
+    let (_dir, tokens) = support::tokens();
+    tokens.save(&url, "enceinte-salon", "nst1_p0").unwrap();
+    let device = Device::new("enceinte-salon", "raspberry-pi-4", "salon").unwrap();
+    let manifest = Manifest::new(device, [IDENTIFY, PERSON_DETECTION, SPEECH_ACTIVITY]).unwrap();
+    let satellite = Satellite::builder(&url, manifest, tokens)
+        .language(Language::En)
+        .text_display(|_: &str, _: bool| {})
+        .text_input()
+        .build()
+        .unwrap();
+    let observer = satellite.observer();
+    let talking = async {
+        support::wait_for(|| observer.is_connected()).await;
+        observer.input_text("Bonsoir").unwrap();
+        observer.person_detected(1, 0.9).unwrap();
+        observer.speech_activity(false).unwrap();
+        support::wait_for(|| core.received().len() == 5).await;
+    };
+    tokio::time::timeout(Duration::from_secs(10), satellite.run_until(talking)).await.unwrap().unwrap();
+
+    let sent: Vec<Value> = core.hellos.lock().unwrap().iter().cloned().chain(core.received()).collect();
+    let mut types: Vec<&str> = sent.iter().map(|m| m["type"].as_str().unwrap()).collect();
+    assert_eq!(types[0], "hello");
+    types.sort_unstable();
+    assert_eq!(
+        types,
+        ["ack", "ack", "hello", "input.text", "observation.person.detected", "observation.speech.activity"]
+    );
+    for message in &sent {
+        let name = format!("{}.json", message["type"].as_str().unwrap());
+        assert_eq!(
+            validator(&name).iter_errors(message).map(|e| e.to_string()).collect::<Vec<_>>(),
+            Vec::<String>::new(),
+            "{message}"
+        );
     }
 }
