@@ -14,6 +14,8 @@ jobs:
   release:
     uses: nestor-home/.github/.github/workflows/release-please.yml@main
     secrets: inherit
+    with:
+      automerge: true  # publish as soon as a release is ready: dependencies follow on their own
 
   crates-io:
     needs: release
