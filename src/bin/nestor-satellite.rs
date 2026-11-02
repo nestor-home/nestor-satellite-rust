@@ -17,7 +17,7 @@ use clap::{Parser, Subcommand};
 use nestor_satellite::devices::{Microphone, Speaker, device_names};
 use nestor_satellite::{
     Device, Enrollment, EnrollmentCode, Error, IDENTIFY, Language, Manifest, Observer, PairingUri, Satellite,
-    TokenStore,
+    TEXT_INPUT, TokenStore,
 };
 use tracing_subscriber::EnvFilter;
 
@@ -118,12 +118,11 @@ async fn main() -> ExitCode {
         Command::Run(run) => {
             init_logging(run.verbose);
             let language = run.language.unwrap_or_else(Language::from_env);
-            let typed = run.text || run.text_only;
             let satellite = match satellite(run, language) {
                 Ok(satellite) => satellite,
                 Err(error) => return fail(&error),
             };
-            if typed {
+            if satellite.manifest().declares(TEXT_INPUT) {
                 type_lines(satellite.observer());
             }
             match satellite.run_until(shutdown()).await {
@@ -161,17 +160,17 @@ fn satellite(run: Run, language: Language) -> Result<Satellite, String> {
     if run.text || run.text_only {
         builder = builder.text_input().text_display(|text: &str, _last: bool| println!("{text}"));
     }
-    let built = if run.text_only {
-        builder.build()
-    } else if run.null_audio {
-        builder.ice_servers(run.ice_servers).null_audio().build()
-    } else {
-        let builder = builder.ice_servers(run.ice_servers);
-        let microphone = run.input_device.map_or_else(Microphone::new, Microphone::named);
-        let speaker = run.output_device.map_or_else(Speaker::new, Speaker::named);
-        builder.source(microphone).sink(speaker).build()
-    };
-    built.map_err(|error: Error| language.describe(&error))
+    if !run.text_only {
+        builder = builder.ice_servers(run.ice_servers);
+        builder = if run.null_audio {
+            builder.null_audio()
+        } else {
+            let microphone = run.input_device.map_or_else(Microphone::new, Microphone::named);
+            let speaker = run.output_device.map_or_else(Speaker::new, Speaker::named);
+            builder.source(microphone).sink(speaker)
+        };
+    }
+    builder.build().map_err(|error: Error| language.describe(&error))
 }
 
 /// Each line typed on stdin, sent as typed text; the satellite goes on after the end of stdin.

@@ -39,6 +39,8 @@ src/
 ├── body.rs       Body: what a driver implements to carry out intents (no-op defaults)
 ├── text.rs       TextDisplay: where the assistant's words are shown (text.display)
 ├── voice.rs      WebRTC audio offered once welcomed, offered again while the link is up (feature `voice`)
+├── voiceless.rs  `voice` without the feature: nothing to open, no device code said (keeps `cfg` out of the
+│                 link and pairing)
 ├── audio.rs      AudioSource / AudioSink traits, SilenceSource / RecordingSink doubles (feature `voice`)
 ├── media.rs      Opus encode/decode, real-time pacing, WebRTC tracks (feature `voice`)
 ├── speech.rs     the device code said through the sink with the bundled clips (voice/) (feature `voice`)

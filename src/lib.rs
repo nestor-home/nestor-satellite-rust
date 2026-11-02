@@ -41,6 +41,9 @@ mod speech;
 pub mod text;
 #[cfg(feature = "voice")]
 mod voice;
+#[cfg(not(feature = "voice"))]
+#[path = "voiceless.rs"]
+mod voice;
 pub mod wire;
 
 #[cfg(feature = "voice")]

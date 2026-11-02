@@ -32,8 +32,7 @@ use crate::codes::{Enrollment, EnrollmentCode};
 use crate::error::{Error, Result};
 use crate::i18n::{Language, SPOKEN_CODE, digits};
 use crate::protocol::{EnrollmentMethod, Manifest, PairingMethod};
-#[cfg(feature = "voice")]
-use crate::speech::SpokenCode;
+use crate::voice::SpokenCode;
 
 /// One device's state for one core, in a JSON file: its token, and the enrollment codes the core
 /// refused (their SHA-256 only), so that a restarted device never sends them again.
@@ -268,7 +267,6 @@ pub(crate) struct Presenter {
     pub(crate) display: Option<Arc<dyn Display>>,
     pub(crate) voice: Option<Arc<dyn Voice>>,
     /// The device code said with the bundled clips, for a speaker without a voice of its own.
-    #[cfg(feature = "voice")]
     pub(crate) speech: Option<Arc<SpokenCode>>,
     pub(crate) language: Language,
 }
@@ -282,13 +280,10 @@ impl Presenter {
         }
         if let Some(voice) = &self.voice {
             voice.say(&self.language.say(SPOKEN_CODE, &[("digits", FluentValue::from(digits(code)))]));
-        } else {
-            #[cfg(feature = "voice")]
-            if let Some(speech) = &self.speech {
-                speech.say(code);
-            }
+        } else if let Some(speech) = &self.speech {
+            speech.say(code);
         }
-        if self.display.is_none() && self.voice.is_none() && !self.speaks() {
+        if self.display.is_none() && self.voice.is_none() && self.speech.is_none() {
             info!("{}", self.language.say("pairing-headless", &[]));
         }
     }
@@ -325,17 +320,8 @@ impl Presenter {
         }
     }
 
-    /// Whether the bundled voice says the device code.
-    fn speaks(&self) -> bool {
-        #[cfg(feature = "voice")]
-        return self.speech.is_some();
-        #[cfg(not(feature = "voice"))]
-        false
-    }
-
     /// Pairing is over: stop saying the code.
     async fn hush(&self) {
-        #[cfg(feature = "voice")]
         if let Some(speech) = &self.speech {
             speech.hush().await;
         }
@@ -673,13 +659,7 @@ mod tests {
 
     fn presenter(display: bool, language: Language) -> Presenter {
         let display: Option<Arc<dyn Display>> = display.then(|| Arc::new(|_: &str, _: &str| {}) as Arc<dyn Display>);
-        Presenter {
-            display,
-            voice: None,
-            #[cfg(feature = "voice")]
-            speech: None,
-            language,
-        }
+        Presenter { display, voice: None, speech: None, language }
     }
 
     #[test]

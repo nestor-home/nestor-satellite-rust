@@ -27,12 +27,12 @@ use crate::i18n::Language;
 use crate::pairing::{Display, Enroller, Handed, Pairing, Presenter, TokenStore, Voice, code_for};
 use crate::protocol::{self, EnrollmentMethod, Manifest, PairingMethod};
 use crate::text::TextDisplay;
+use crate::voice::{Audio, VoiceSetup};
 use crate::wire::{self, Welcome};
 #[cfg(feature = "voice")]
 use crate::{
     audio::{AudioSink, AudioSource, Drain, SilenceSource},
-    speech::SpokenCode,
-    voice::{self, Audio, Call, VoiceSetup},
+    voice::Call,
 };
 
 /// Where an enrollment code handed in is waiting for the pairing in progress.
@@ -61,10 +61,8 @@ pub struct Satellite {
     body: Arc<dyn Body>,
     text: Option<Arc<dyn TextDisplay>>,
     presenter: Presenter,
-    #[cfg(feature = "voice")]
     voice: VoiceSetup,
     /// The device code is said through the sink with the bundled clips.
-    #[cfg(feature = "voice")]
     speaks: bool,
     configured: StdMutex<Option<Handed>>,
     refused: StdMutex<HashSet<EnrollmentCode>>,
@@ -98,16 +96,8 @@ impl Satellite {
                 tokens,
                 body: Arc::new(NoBody),
                 text: None,
-                presenter: Presenter {
-                    display: None,
-                    voice: None,
-                    #[cfg(feature = "voice")]
-                    speech: None,
-                    language: Language::from_env(),
-                },
-                #[cfg(feature = "voice")]
+                presenter: Presenter { display: None, voice: None, speech: None, language: Language::from_env() },
                 voice: VoiceSetup::default(),
-                #[cfg(feature = "voice")]
                 speaks: false,
                 configured: StdMutex::new(None),
                 refused: StdMutex::new(HashSet::new()),
@@ -154,16 +144,10 @@ impl Satellite {
     }
 
     /// [`run`](Self::run) until `shutdown` completes, then release the audio devices.
-    #[cfg_attr(not(feature = "voice"), allow(unused_mut))]
     pub async fn run_until(mut self, shutdown: impl Future<Output = ()>) -> Result<()> {
-        #[cfg(feature = "voice")]
         let audio = self.voice.open().await?;
         let http = Client::builder().timeout(Duration::from_secs(10)).build()?;
-        let session = Session {
-            http: &http,
-            #[cfg(feature = "voice")]
-            audio: &audio,
-        };
+        let session = Session { http: &http, audio: &audio };
         let outcome = tokio::select! {
             outcome = self.serve(&session) => outcome,
             () = shutdown => Ok(()),
@@ -171,7 +155,6 @@ impl Satellite {
         if self.shared.set_link(None) {
             self.body.connected(false);
         }
-        #[cfg(feature = "voice")]
         audio.close().await;
         outcome
     }
@@ -210,13 +193,10 @@ impl Satellite {
         if let Some(token) = self.tokens.load(&self.core, device) {
             return Ok(token);
         }
-        #[cfg(feature = "voice")]
         let presenter = Presenter {
-            speech: self.speaks.then(|| Arc::new(SpokenCode::new(session.audio.sink.clone(), self.presenter.language))),
+            speech: self.speaks.then(|| session.audio.spoken_code(self.presenter.language)).flatten(),
             ..self.presenter.clone()
         };
-        #[cfg(not(feature = "voice"))]
-        let presenter = self.presenter.clone();
         let token = Pairing {
             http: session.http,
             core: &self.core,
@@ -237,7 +217,7 @@ impl Satellite {
     }
 
     /// One link, until the core closes it or it is lost; whether it was welcomed.
-    #[cfg_attr(not(feature = "voice"), allow(unused_variables))]
+    #[cfg_attr(not(feature = "voice"), allow(unused_variables))] // the session offers audio
     async fn link(&self, session: &Session<'_>, token: &str) -> Result<bool> {
         let device = self.manifest.device().id();
         let url = format!("{}/satellites/{device}/link", ws_url(&self.core));
@@ -262,18 +242,13 @@ impl Satellite {
         tokio::pin!(silence);
 
         let end = loop {
-            tokio::select! {
+            let reply = tokio::select! {
                 frame = read.next() => {
                     silence.as_mut().reset(tokio::time::Instant::now() + self.link_silence);
                     match frame {
                         Some(Ok(Frame::Text(text))) => match dispatcher.handle(&text) {
-                            Outcome::Nothing => {}
-                            Outcome::Reply(reply) => {
-                                if let Err(error) = write.send(Frame::text(reply)).await {
-                                    warn!(%error, "the link broke");
-                                    break End::Lost;
-                                }
-                            }
+                            Outcome::Nothing => None,
+                            Outcome::Reply(reply) => Some(reply),
                             Outcome::Welcomed(welcome) => {
                                 info!(room = %welcome.room, capabilities = ?welcome.capabilities, "welcomed by the core");
                                 if !welcomed {
@@ -287,10 +262,11 @@ impl Satellite {
                                 } else {
                                     self.shared.set_welcome(welcome);
                                 }
+                                None
                             }
                         },
                         Some(Ok(Frame::Close(frame))) => break End::Closed(frame.map(|f| u16::from(f.code))),
-                        Some(Ok(_)) => {} // pings are answered by the WebSocket itself
+                        Some(Ok(_)) => None, // pings are answered by the WebSocket itself
                         Some(Err(error)) => {
                             warn!(%error, "the link broke");
                             break End::Lost;
@@ -298,16 +274,12 @@ impl Satellite {
                         None => break End::Closed(None),
                     }
                 }
-                Some(message) = outgoing.recv() => {
-                    if let Err(error) = write.send(Frame::text(message)).await {
-                        warn!(%error, "the link broke");
-                        break End::Lost;
-                    }
-                }
+                Some(message) = outgoing.recv() => Some(message),
                 Some(ended) = tasks.join_next() => {
                     if let Ok(Err(Error::TokenRefused)) = ended {
                         break End::Refused;
                     }
+                    None
                 }
                 () = &mut welcome_deadline, if !welcomed => {
                     break End::Late;
@@ -316,11 +288,16 @@ impl Satellite {
                     warn!(seconds = self.link_silence.as_secs(), "nothing heard from the core: the link is lost");
                     break End::Lost;
                 }
+            };
+            if let Some(message) = reply
+                && let Err(error) = write.send(Frame::text(message)).await
+            {
+                warn!(%error, "the link broke");
+                break End::Lost;
             }
         };
 
-        tasks.abort_all();
-        while tasks.join_next().await.is_some() {}
+        tasks.shutdown().await;
         if self.shared.set_link(None) {
             self.body.connected(false);
         }
@@ -349,7 +326,8 @@ impl Satellite {
     /// Offer audio for this link when the welcome allows some the device declared.
     #[cfg(feature = "voice")]
     fn talk(&self, session: &Session<'_>, token: &str, welcome: &Welcome, tasks: &mut JoinSet<Result<()>>) {
-        if !voice::allowed(welcome, |c| self.manifest.declares(c)) {
+        let granted = |capability| self.manifest.declares(capability) && welcome.capabilities.contains(capability);
+        if !granted(protocol::AUDIO_CAPTURE) && !granted(protocol::AUDIO_PLAYBACK) {
             debug!("no audio allowed: none offered");
             return;
         }
@@ -364,8 +342,7 @@ impl Satellite {
             backoff: Backoff::new(self.backoff.0, self.backoff.1),
             body: self.body.clone(),
             audio: session.audio.clone(),
-            microphone: self.manifest.declares(protocol::AUDIO_CAPTURE)
-                && welcome.capabilities.contains(protocol::AUDIO_CAPTURE),
+            microphone: granted(protocol::AUDIO_CAPTURE),
         };
         tasks.spawn(call.run());
     }
@@ -374,7 +351,6 @@ impl Satellite {
 /// What one run holds: the HTTP client, the open audio devices.
 struct Session<'a> {
     http: &'a Client,
-    #[cfg(feature = "voice")]
     audio: &'a Audio,
 }
 
@@ -558,29 +534,20 @@ impl SatelliteBuilder {
         if presenter.display.is_some() {
             methods.insert(PairingMethod::DeviceCodeDisplay);
         }
-        #[cfg(feature = "voice")]
-        {
-            satellite.speaks = presenter.voice.is_none() && presenter.display.is_none() && satellite.voice.audible;
-        }
-        #[cfg(feature = "voice")]
-        let speaks = satellite.speaks;
-        #[cfg(not(feature = "voice"))]
-        let speaks = false;
-        if presenter.voice.is_some() || speaks {
+        satellite.speaks = presenter.voice.is_none() && presenter.display.is_none() && satellite.voice.audible();
+        if presenter.voice.is_some() || satellite.speaks {
             methods.insert(PairingMethod::DeviceCodeSpeech);
         }
         satellite.manifest = satellite.manifest.clone().with_pairing_methods(methods)?;
-        satellite.shared = Arc::new(Shared { declared: capabilities(&satellite.manifest), ..Shared::default() });
+        let declared = satellite.manifest.capabilities().iter().map(|c| c.name().to_owned()).collect();
+        satellite.shared = Arc::new(Shared { declared, ..Shared::default() });
         Ok(self.satellite)
     }
 
     /// The capabilities the builder declares, and whether it was given what carries each out.
     fn given(&self) -> [(&'static str, bool); 4] {
         let satellite = &self.satellite;
-        #[cfg(feature = "voice")]
-        let (microphone, speaker) = (satellite.voice.source.is_some(), satellite.voice.sink.is_some());
-        #[cfg(not(feature = "voice"))]
-        let (microphone, speaker) = (false, false);
+        let (microphone, speaker) = satellite.voice.given();
         [
             (protocol::TEXT_INPUT, self.typed),
             (protocol::TEXT_DISPLAY, satellite.text.is_some()),
@@ -588,10 +555,6 @@ impl SatelliteBuilder {
             (protocol::AUDIO_PLAYBACK, speaker),
         ]
     }
-}
-
-fn capabilities(manifest: &Manifest) -> BTreeSet<String> {
-    manifest.capabilities().iter().map(|c| c.name().to_owned()).collect()
 }
 
 /// The enrollment configured in the environment: `NESTOR_PAIRING_URI`, else `NESTOR_PAIRING_CODE`.
@@ -678,7 +641,12 @@ impl Observer {
     }
 
     fn send(&self, capability: &'static str, message_type: &'static str, message: Value) -> Result<bool> {
-        let allowed = self.welcome().is_none_or(|welcome| welcome.capabilities.contains(capability));
+        let allowed = self
+            .shared
+            .welcome
+            .lock()
+            .ok()
+            .is_none_or(|welcome| welcome.as_ref().is_none_or(|welcome| welcome.capabilities.contains(capability)));
         if !self.shared.declared.contains(capability) || !allowed {
             return Err(Error::CapabilityNotAllowed { message_type, capability });
         }

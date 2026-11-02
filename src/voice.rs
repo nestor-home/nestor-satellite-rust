@@ -31,10 +31,10 @@ use crate::audio::{AudioSink, AudioSource, Drain, SilenceSource};
 use crate::body::Body;
 use crate::client::Backoff;
 use crate::error::{Error, Result};
+use crate::i18n::Language;
 use crate::media;
 use crate::pairing::success;
-use crate::protocol::{AUDIO_CAPTURE, AUDIO_PLAYBACK};
-use crate::wire::Welcome;
+pub(crate) use crate::speech::SpokenCode;
 
 /// What the driver gave to talk aloud with, before the satellite runs.
 pub(crate) struct VoiceSetup {
@@ -61,6 +61,16 @@ impl Default for VoiceSetup {
 }
 
 impl VoiceSetup {
+    /// What it was given: a microphone, a speaker.
+    pub(crate) fn given(&self) -> (bool, bool) {
+        (self.source.is_some(), self.sink.is_some())
+    }
+
+    /// Whether the sink is a real speaker the device code can be said through.
+    pub(crate) fn audible(&self) -> bool {
+        self.audible
+    }
+
     /// Open the devices given, for the whole run.
     pub(crate) async fn open(&mut self) -> Result<Audio> {
         let mut source = self.source.take().unwrap_or_else(|| Box::new(SilenceSource::new()));
@@ -82,6 +92,11 @@ pub(crate) struct Audio {
 }
 
 impl Audio {
+    /// The device code, said through the sink with the bundled clips.
+    pub(crate) fn spoken_code(&self, language: Language) -> Option<Arc<SpokenCode>> {
+        Some(Arc::new(SpokenCode::new(self.sink.clone(), language)))
+    }
+
     /// Release the devices.
     pub(crate) async fn close(&self) {
         self.source.lock().await.close().await;
@@ -104,11 +119,6 @@ pub(crate) struct Call {
     pub(crate) audio: Audio,
     /// The microphone is sent (declared and allowed); silence otherwise.
     pub(crate) microphone: bool,
-}
-
-/// Whether the welcome allows any audio this device declared.
-pub(crate) fn allowed(welcome: &Welcome, declared: impl Fn(&str) -> bool) -> bool {
-    [AUDIO_CAPTURE, AUDIO_PLAYBACK].iter().any(|c| declared(c) && welcome.capabilities.contains(*c))
 }
 
 impl Call {
@@ -135,8 +145,7 @@ impl Call {
         let peer = self.peer(events).await?;
         let mut tasks = JoinSet::new();
         let outcome = self.converse(&peer, &mut signals, &mut tasks).await;
-        tasks.abort_all();
-        while tasks.join_next().await.is_some() {}
+        tasks.shutdown().await;
         if let Err(error) = peer.close().await {
             debug!(%error, "closing the peer connection");
         }

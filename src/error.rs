@@ -88,7 +88,8 @@ pub enum Error {
     /// A JSON document could not be read or written.
     #[error("JSON: {0}")]
     Json(#[from] serde_json::Error),
-    /// The link is not as expected (no welcome, no codec negotiated, no track…).
+    /// The audio connection is not as expected (no local description, no codec negotiated…).
+    #[cfg(feature = "voice")]
     #[error("link: {0}")]
     Link(&'static str),
     /// Something took longer than allowed.
