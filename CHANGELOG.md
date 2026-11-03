@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.5.1](https://github.com/nestor-home/nestor-satellite-rust/compare/v0.5.0...v0.5.1) (2026-11-03)
+
+
+### Bug Fixes
+
+* **deps:** update rust crate reqwest to 0.13.0 ([#22](https://github.com/nestor-home/nestor-satellite-rust/issues/22)) ([5be1981](https://github.com/nestor-home/nestor-satellite-rust/commit/5be1981f96deea2c2d2d0752675d056b4bd68338))
+
 ## [0.5.0](https://github.com/nestor-home/nestor-satellite-rust/compare/v0.4.0...v0.5.0) (2026-11-02)
 
 
