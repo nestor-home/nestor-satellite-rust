@@ -146,6 +146,9 @@ impl Satellite {
     /// [`run`](Self::run) until `shutdown` completes, then release the audio devices.
     pub async fn run_until(mut self, shutdown: impl Future<Output = ()>) -> Result<()> {
         let audio = self.voice.open().await?;
+        // reqwest comes without a crypto provider: the process's is ring, which the SDK already uses,
+        // unless the application installed its own first.
+        let _ = rustls::crypto::ring::default_provider().install_default();
         let http = Client::builder().timeout(Duration::from_secs(10)).build()?;
         let session = Session { http: &http, audio: &audio };
         let outcome = tokio::select! {
