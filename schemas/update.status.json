@@ -33,6 +33,12 @@
           "type": "string",
           "minLength": 1,
           "maxLength": 64
+        },
+        "notes": {
+          "type": "string",
+          "minLength": 9,
+          "maxLength": 512,
+          "pattern": "^https://\\S+$"
         }
       },
       "required": [
@@ -48,7 +54,8 @@
       },
       "then": {
         "properties": {
-          "version": false
+          "version": false,
+          "notes": false
         }
       },
       "else": {
