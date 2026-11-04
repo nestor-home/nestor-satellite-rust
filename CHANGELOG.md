@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.6.0](https://github.com/nestor-home/nestor-satellite-rust/compare/v0.5.2...v0.6.0) (2026-11-04)
+
+
+### ⚠ BREAKING CHANGES
+
+* name the software in the manifest, and update it on request ([#30](https://github.com/nestor-home/nestor-satellite-rust/issues/30))
+
+### Features
+
+* name the software in the manifest, and update it on request ([#30](https://github.com/nestor-home/nestor-satellite-rust/issues/30)) ([5291253](https://github.com/nestor-home/nestor-satellite-rust/commit/5291253dd56c3ef81f61ad5ea3b9225f68f91174))
+
 ## [0.5.2](https://github.com/nestor-home/nestor-satellite-rust/compare/v0.5.1...v0.5.2) (2026-11-04)
 
 
