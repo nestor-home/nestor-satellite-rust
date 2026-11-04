@@ -1,7 +1,7 @@
 //! Messages on the link: one JSON envelope `{"type", "id", "at", "payload"}` per WebSocket text frame.
 //!
-//! The satellite sends `hello` first, then `ack`s, observations and typed text; the core sends
-//! `welcome` and `intent.*`. Decoding is as strict as the server's: exactly the four envelope keys,
+//! The satellite sends `hello` first, then `ack`s, observations, typed text and `update.status`; the
+//! core sends `welcome` and `intent.*`. Decoding is as strict as the server's: exactly the four envelope keys,
 //! an id of 1 to 64 characters, an ISO 8601 time, and a payload without unknown fields. A message
 //! *type* this SDK does not know is not an error, though ([`Message::Unknown`]): a newer core does
 //! not break an older driver.
@@ -9,8 +9,8 @@
 use std::collections::BTreeSet;
 
 use chrono::{DateTime, NaiveDateTime, SecondsFormat, Utc};
-use serde::Deserialize;
 use serde::de::DeserializeOwned;
+use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value, json};
 
 use crate::protocol::{Behavior, Expression, Manifest, ProtocolError};
@@ -25,6 +25,8 @@ pub const INPUT_TEXT: &str = "input.text";
 pub const PERSON_DETECTED: &str = "observation.person.detected";
 /// `observation.speech.activity`: voice activity started or stopped.
 pub const SPEECH_ACTIVITY: &str = "observation.speech.activity";
+/// `update.status`: where the device's own software stands.
+pub const UPDATE_STATUS: &str = "update.status";
 /// `welcome`: the core's answer to `hello`.
 pub const WELCOME: &str = "welcome";
 /// `intent.behavior`: the assistant's attitude changed.
@@ -37,6 +39,8 @@ pub const INTENT_BEAT: &str = "intent.beat";
 pub const INTENT_IDENTIFY: &str = "intent.identify";
 /// `intent.text`: the assistant's words, to show.
 pub const INTENT_TEXT: &str = "intent.text";
+/// `intent.update`: a person asks the device to install a newer version of its software.
+pub const INTENT_UPDATE: &str = "intent.update";
 
 /// At most this many characters typed in one `input.text`.
 pub const MAX_INPUT_TEXT: usize = 4_000;
@@ -44,6 +48,21 @@ pub const MAX_INPUT_TEXT: usize = 4_000;
 pub const MAX_INTENT_TEXT: usize = 16_000;
 
 const MAX_ID: usize = 64;
+const MAX_VERSION: usize = 64;
+
+/// Where the device's own software stands (`update.status`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum UpdateState {
+    /// Nothing newer was found.
+    Current,
+    /// A newer version can be installed.
+    Available,
+    /// It installs a version, then starts again on it.
+    Installing,
+    /// A version did not install or did not start: it went back to the one it runs.
+    Failed,
+}
 
 /// A message in its envelope, with a fresh id and the current time.
 pub fn envelope(message_type: &str, payload: Value) -> Value {
@@ -84,6 +103,29 @@ pub fn speech_activity(active: bool) -> Value {
     envelope(SPEECH_ACTIVITY, json!({ "active": active }))
 }
 
+/// `update.status {state, version}`: `version` (1 to 64 characters) goes with every state but
+/// [`UpdateState::Current`], and only with them.
+pub fn update_status(state: UpdateState, version: Option<&str>) -> Result<Value, ProtocolError> {
+    match (state, version) {
+        (UpdateState::Current, None) => Ok(envelope(UPDATE_STATUS, json!({ "state": state }))),
+        (UpdateState::Current, Some(_)) | (_, None) => {
+            Err(ProtocolError::new("update.status: a version goes with every state but current, and only with them"))
+        }
+        (_, Some(version)) => {
+            Ok(envelope(UPDATE_STATUS, json!({ "state": state, "version": checked_version(version)? })))
+        }
+    }
+}
+
+fn checked_version(version: &str) -> Result<&str, ProtocolError> {
+    let length = version.chars().count();
+    if (1..=MAX_VERSION).contains(&length) {
+        Ok(version)
+    } else {
+        Err(ProtocolError::new(format!("a version has 1 to {MAX_VERSION} characters, not {length}")))
+    }
+}
+
 /// The core's answer to `hello`: where the device is and what it was allowed to do.
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -118,6 +160,12 @@ pub enum Intent {
         text: String,
         /// The last message of its turn (`final`).
         last: bool,
+    },
+    /// A person asks the device to install `version` of its software, the newer one it reported,
+    /// and start again on it.
+    Update {
+        /// The version to install.
+        version: String,
     },
 }
 
@@ -212,6 +260,11 @@ pub fn decode(data: Value) -> Result<Received, ProtocolError> {
             }
             Message::Intent(Intent::Text { text: p.text, last: p.r#final.unwrap_or(true) })
         }
+        INTENT_UPDATE => {
+            let p: UpdatePayload = payload_of(&message_type, payload)?;
+            checked_version(&p.version).map_err(|e| ProtocolError::new(format!("{message_type}.version: {e}")))?;
+            Message::Intent(Intent::Update { version: p.version })
+        }
         _ => Message::Unknown(message_type),
     };
     Ok(Received { id, at, message })
@@ -239,6 +292,12 @@ struct EmptyPayload {}
 struct TextPayload {
     text: String,
     r#final: Option<bool>,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct UpdatePayload {
+    version: String,
 }
 
 fn payload_of<T: DeserializeOwned>(message_type: &str, payload: Map<String, Value>) -> Result<T, ProtocolError> {
@@ -309,6 +368,10 @@ mod tests {
             Message::Intent(Intent::Text { text: "Je regarde.".into(), last: false })
         );
         assert_eq!(
+            nestor(&message(INTENT_UPDATE, json!({"version": "0.6.0"}))).message,
+            Message::Intent(Intent::Update { version: "0.6.0".into() })
+        );
+        assert_eq!(
             nestor(&message(INTENT_TEXT, json!({"text": "Il fait 21 °C."}))).message,
             Message::Intent(Intent::Text { text: "Il fait 21 °C.".into(), last: true }),
             "an unprompted message is the last of its turn"
@@ -340,6 +403,10 @@ mod tests {
             message(INTENT_TEXT, json!({"text": "é".repeat(16_001)})),
             message(INTENT_TEXT, json!({"text": "ok", "final": "yes"})),
             message(INTENT_TEXT, json!({"text": "ok", "markdown": true})),
+            message(INTENT_UPDATE, json!({})),
+            message(INTENT_UPDATE, json!({"version": ""})),
+            message(INTENT_UPDATE, json!({"version": "1".repeat(65)})),
+            message(INTENT_UPDATE, json!({"version": "0.6.0", "url": "https://example.org/x"})),
             json!({"type": "intent.beat", "id": "m", "at": "2026-10-30T12:00:00Z"}).to_string(),
             json!({"type": "intent.beat", "id": "m", "at": "2026-10-30T12:00:00Z", "payload": {}, "x": 1}).to_string(),
             json!({"type": "intent.beat", "id": "", "at": "2026-10-30T12:00:00Z", "payload": {}}).to_string(),
@@ -375,6 +442,14 @@ mod tests {
         assert!(input_text("").is_err());
         assert!(input_text(&"é".repeat(4_000)).is_ok(), "characters, not bytes");
         assert!(input_text(&"é".repeat(4_001)).is_err());
+        assert_eq!(update_status(UpdateState::Current, None)?["payload"], json!({"state": "current"}));
+        assert_eq!(
+            update_status(UpdateState::Available, Some("0.6.0"))?["payload"],
+            json!({"state": "available", "version": "0.6.0"})
+        );
+        assert!(update_status(UpdateState::Current, Some("0.6.0")).is_err());
+        assert!(update_status(UpdateState::Failed, None).is_err());
+        assert!(update_status(UpdateState::Installing, Some("")).is_err());
         let manifest = Manifest::new(crate::Device::new("a", "m", "salon")?, ["text.input"])?;
         assert_eq!(hello(&manifest, "nst1_x")["payload"]["token"], "nst1_x");
         Ok(())

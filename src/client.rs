@@ -2,7 +2,8 @@
 //!
 //! The link is one WebSocket (`/satellites/{device_id}/link`) that carries every message: `hello`
 //! (manifest and token) then `welcome`, intents (acknowledged), observations and typed text. With
-//! the `voice` feature, a device allowed audio also offers WebRTC once welcomed, for audio only.
+//! the `voice` feature, a device allowed audio also offers WebRTC once welcomed, for audio only. With
+//! an [`Updater`], it reports and installs newer versions of its software ([`crate::update`]).
 
 use std::collections::{BTreeSet, HashSet};
 use std::future::{Future, pending};
@@ -27,6 +28,7 @@ use crate::i18n::Language;
 use crate::pairing::{Display, Enroller, Handed, Pairing, Presenter, TokenStore, Voice, code_for};
 use crate::protocol::{self, EnrollmentMethod, Manifest, PairingMethod};
 use crate::text::TextDisplay;
+use crate::update::{Restart, Updater, Updates};
 use crate::voice::{Audio, VoiceSetup};
 use crate::wire::{self, Welcome};
 #[cfg(feature = "voice")]
@@ -72,6 +74,7 @@ pub struct Satellite {
     welcome_timeout: Duration,
     link_silence: Duration,
     shared: Arc<Shared>,
+    updates: Option<Arc<Updates>>,
 }
 
 /// Configures a [`Satellite`].
@@ -81,6 +84,9 @@ pub struct SatelliteBuilder {
     accepted: BTreeSet<EnrollmentMethod>,
     /// The driver sends typed text through the [`Observer`].
     typed: bool,
+    updater: Option<Arc<dyn Updater>>,
+    restart: Option<Restart>,
+    update_grace: Option<Duration>,
 }
 
 impl Satellite {
@@ -107,10 +113,14 @@ impl Satellite {
                 welcome_timeout: Duration::from_secs(10),
                 link_silence: LINK_SILENCE,
                 shared: Arc::new(Shared::default()),
+                updates: None,
             },
             enrollment: None,
             accepted: BTreeSet::new(),
             typed: false,
+            updater: None,
+            restart: None,
+            update_grace: None,
         }
     }
 
@@ -138,7 +148,9 @@ impl Satellite {
     ///
     /// Only a core speaking another protocol, a pairing request it refuses as malformed, a newer link
     /// of the same device ([`Error::Replaced`]) or an audio device that cannot open stop it; a core
-    /// that is down, a link that drops, a refused token (forgotten, then paired again) do not.
+    /// that is down, a link that drops, a refused token (forgotten, then paired again) do not. With
+    /// an [`Updater`], it also ends by starting again on another version of its software (by default
+    /// replacing the process; with a [`Restart`] that returns, `run` returns `Ok`).
     pub async fn run(self) -> Result<()> {
         self.run_until(pending()).await
     }
@@ -151,22 +163,34 @@ impl Satellite {
         let _ = rustls::crypto::ring::default_provider().install_default();
         let http = Client::builder().timeout(Duration::from_secs(10)).build()?;
         let session = Session { http: &http, audio: &audio };
-        let outcome = tokio::select! {
-            outcome = self.serve(&session) => outcome,
-            () = shutdown => Ok(()),
+        let late = async {
+            match &self.updates {
+                Some(updates) => updates.unless_welcomed().await,
+                None => pending().await,
+            }
+        };
+        let restart = tokio::select! {
+            outcome = self.serve(&session) => outcome.map(|()| true),
+            () = late => Ok(true),
+            () = shutdown => Ok(false),
         };
         if self.shared.set_link(None) {
             self.body.connected(false);
         }
         audio.close().await;
-        outcome
+        match (restart?, &self.updates) {
+            (true, Some(updates)) => Ok((updates.restart)()?),
+            _ => Ok(()),
+        }
     }
 
+    /// Hold the link until a fatal error, or `Ok` once another version of the software is installed.
     async fn serve(&self, session: &Session<'_>) -> Result<()> {
         let mut backoff = Backoff::new(self.backoff.0, self.backoff.1);
         loop {
             let welcomed = match self.attempt(session).await {
-                Ok(welcomed) => welcomed,
+                Ok(Linked::Updated) => return Ok(()),
+                Ok(Linked::Ended { welcomed }) => welcomed,
                 Err(Error::TokenRefused) => {
                     warn!("the core refused this satellite's token: pairing again");
                     self.tokens.forget()?;
@@ -186,7 +210,7 @@ impl Satellite {
         }
     }
 
-    async fn attempt(&self, session: &Session<'_>) -> Result<bool> {
+    async fn attempt(&self, session: &Session<'_>) -> Result<Linked> {
         let token = self.token(session).await?;
         self.link(session, &token).await
     }
@@ -219,9 +243,9 @@ impl Satellite {
         Ok(token)
     }
 
-    /// One link, until the core closes it or it is lost; whether it was welcomed.
+    /// One link, until the core closes it, it is lost, or another version of the software is installed.
     #[cfg_attr(not(feature = "voice"), allow(unused_variables))] // the session offers audio
-    async fn link(&self, session: &Session<'_>, token: &str) -> Result<bool> {
+    async fn link(&self, session: &Session<'_>, token: &str) -> Result<Linked> {
         let device = self.manifest.device().id();
         let url = format!("{}/satellites/{device}/link", ws_url(&self.core));
         debug!(%url, "opening the link");
@@ -237,6 +261,7 @@ impl Satellite {
             dispatcher = dispatcher.with_text(text.clone());
         }
         let (outbox, mut outgoing) = mpsc::unbounded_channel::<String>();
+        let (installed, mut updated) = mpsc::unbounded_channel::<()>();
         let mut tasks: JoinSet<Result<()>> = JoinSet::new();
         let mut welcomed = false;
         let welcome_deadline = tokio::time::sleep(self.welcome_timeout);
@@ -251,7 +276,11 @@ impl Satellite {
                     match frame {
                         Some(Ok(Frame::Text(text))) => match dispatcher.handle(&text) {
                             Outcome::Nothing => None,
-                            Outcome::Reply(reply) => Some(reply),
+                                Outcome::Reply(reply) => Some(reply),
+                            Outcome::Update { reply, version } => {
+                                self.update(version, &outbox, &installed, &mut tasks);
+                                Some(reply)
+                            }
                             Outcome::Welcomed(welcome) => {
                                 info!(room = %welcome.room, capabilities = ?welcome.capabilities, "welcomed by the core");
                                 if !welcomed {
@@ -259,6 +288,12 @@ impl Satellite {
                                     self.shared.connections.fetch_add(1, Ordering::SeqCst);
                                     #[cfg(feature = "voice")]
                                     self.talk(session, token, &welcome, &mut tasks);
+                                    if let Some(updates) = &self.updates {
+                                        updates.welcomed();
+                                        if welcome.capabilities.contains(protocol::UPDATE) {
+                                            tasks.spawn(updates.clone().report(outbox.clone()));
+                                        }
+                                    }
                                     self.shared.set_welcome(welcome);
                                     self.shared.set_link(Some(outbox.clone()));
                                     self.body.connected(true);
@@ -278,6 +313,7 @@ impl Satellite {
                     }
                 }
                 Some(message) = outgoing.recv() => Some(message),
+                Some(()) = updated.recv() => break End::Updated,
                 Some(ended) = tasks.join_next() => {
                     if let Ok(Err(Error::TokenRefused)) = ended {
                         break End::Refused;
@@ -304,10 +340,11 @@ impl Satellite {
         if self.shared.set_link(None) {
             self.body.connected(false);
         }
-        if let End::Lost | End::Late | End::Refused = end {
+        if let End::Lost | End::Late | End::Refused | End::Updated = end {
             let _ = tokio::time::timeout(Duration::from_secs(1), write.send(Frame::Close(None))).await;
         }
         match end {
+            End::Updated => Ok(Linked::Updated),
             End::Closed(Some(TOKEN_REFUSED)) | End::Refused => Err(Error::TokenRefused),
             End::Closed(Some(REPLACED)) => {
                 warn!("a newer link of this device replaced this one: stopping");
@@ -315,15 +352,38 @@ impl Satellite {
             }
             End::Closed(Some(OFF_CONTRACT)) => {
                 warn!("the core turned the hello away (4400): reconnecting");
-                Ok(welcomed)
+                Ok(Linked::Ended { welcomed })
             }
             End::Closed(code) => {
                 info!(code = code.unwrap_or(u16::from(CloseCode::Status)), "the core closed the link");
-                Ok(welcomed)
+                Ok(Linked::Ended { welcomed })
             }
-            End::Lost => Ok(welcomed),
+            End::Lost => Ok(Linked::Ended { welcomed }),
             End::Late => Err(Error::Timeout("no welcome from the core")),
         }
+    }
+
+    /// `intent.update`: install `version` in the background when this device updates itself and was
+    /// allowed to; the link ends once it is installed.
+    fn update(
+        &self,
+        version: String,
+        outbox: &mpsc::UnboundedSender<String>,
+        installed: &mpsc::UnboundedSender<()>,
+        tasks: &mut JoinSet<Result<()>>,
+    ) {
+        let allowed = self.shared.welcome().is_some_and(|w| w.capabilities.contains(protocol::UPDATE));
+        let Some(updates) = self.updates.clone().filter(|_| allowed) else {
+            debug!("intent.update without device.update allowed: ignored");
+            return;
+        };
+        let (outbox, installed) = (outbox.clone(), installed.clone());
+        tasks.spawn(async move {
+            if updates.install(&version, &outbox).await {
+                let _ = installed.send(());
+            }
+            Ok(())
+        });
     }
 
     /// Offer audio for this link when the welcome allows some the device declared.
@@ -357,6 +417,14 @@ struct Session<'a> {
     audio: &'a Audio,
 }
 
+/// How a link ended.
+enum Linked {
+    /// The core closed it or it was lost, after a welcome or not.
+    Ended { welcomed: bool },
+    /// Another version of the software is installed: start again on it.
+    Updated,
+}
+
 /// Why a link ended.
 enum End {
     /// The core closed it, with this code.
@@ -367,6 +435,8 @@ enum End {
     Late,
     /// The core refused the token on an audio offer.
     Refused,
+    /// Another version of the software is installed.
+    Updated,
 }
 
 /// The link's address: the core's base URL with `ws` for `http`, `wss` for `https`.
@@ -478,6 +548,30 @@ impl SatelliteBuilder {
         self
     }
 
+    /// Where newer versions of the device's software come from and how they are installed: the
+    /// satellite declares `device.update`, reports what it finds once welcomed and once a day, and
+    /// installs it when a person asks in Nestor, then starts again on it. The manifest names the
+    /// software ([`Manifest::with_software`]).
+    pub fn updater(mut self, updater: impl Updater) -> Self {
+        self.updater = Some(Arc::new(updater));
+        self
+    }
+
+    /// What starts the version just installed (default: the same program with the same arguments
+    /// replaces the process, on Unix). A [`Restart`] that returns `Ok` makes [`Satellite::run`]
+    /// return.
+    pub fn restart(mut self, restart: impl Fn() -> std::io::Result<()> + Send + Sync + 'static) -> Self {
+        self.restart = Some(Arc::new(restart));
+        self
+    }
+
+    /// How long a version just installed has to be welcomed before going back to the one that ran
+    /// before (default 60 s).
+    pub fn update_grace(mut self, grace: Duration) -> Self {
+        self.update_grace = Some(grace);
+        self
+    }
+
     /// How often the pairing is polled while waiting for approval (default 1 s).
     pub fn poll_interval(mut self, poll: Duration) -> Self {
         self.satellite.poll = poll;
@@ -544,14 +638,25 @@ impl SatelliteBuilder {
         satellite.manifest = satellite.manifest.clone().with_pairing_methods(methods)?;
         let declared = satellite.manifest.capabilities().iter().map(|c| c.name().to_owned()).collect();
         satellite.shared = Arc::new(Shared { declared, ..Shared::default() });
+        if let Some(updater) = self.updater {
+            let mut updates = Updates::new(updater, satellite.manifest.software().clone(), satellite.tokens.path());
+            if let Some(restart) = self.restart {
+                updates.restart = restart;
+            }
+            if let Some(grace) = self.update_grace {
+                updates.grace = grace;
+            }
+            satellite.updates = Some(Arc::new(updates));
+        }
         Ok(self.satellite)
     }
 
     /// The capabilities the builder declares, and whether it was given what carries each out.
-    fn given(&self) -> [(&'static str, bool); 4] {
+    fn given(&self) -> [(&'static str, bool); 5] {
         let satellite = &self.satellite;
         let (microphone, speaker) = satellite.voice.given();
         [
+            (protocol::UPDATE, self.updater.is_some()),
             (protocol::TEXT_INPUT, self.typed),
             (protocol::TEXT_DISPLAY, satellite.text.is_some()),
             (protocol::AUDIO_CAPTURE, microphone),
@@ -630,7 +735,7 @@ impl Observer {
 
     /// The core's last welcome: the paired room and what the household allowed.
     pub fn welcome(&self) -> Option<Welcome> {
-        self.shared.welcome.lock().ok().and_then(|w| w.clone())
+        self.shared.welcome()
     }
 
     /// Whether the satellite is connected and welcomed now.
@@ -699,6 +804,10 @@ impl Shared {
     /// Set the link; whether one was up before.
     fn set_link(&self, link: Option<mpsc::UnboundedSender<String>>) -> bool {
         self.link.lock().map(|mut current| std::mem::replace(&mut *current, link).is_some()).unwrap_or(false)
+    }
+
+    fn welcome(&self) -> Option<Welcome> {
+        self.welcome.lock().ok().and_then(|w| w.clone())
     }
 
     fn set_welcome(&self, welcome: Welcome) {

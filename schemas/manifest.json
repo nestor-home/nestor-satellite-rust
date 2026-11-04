@@ -36,7 +36,7 @@
       ],
       "additionalProperties": false
     },
-    "sdk": {
+    "software": {
       "type": "object",
       "properties": {
         "name": {
@@ -90,6 +90,7 @@
   "required": [
     "protocol",
     "device",
+    "software",
     "pairing_methods"
   ],
   "additionalProperties": false

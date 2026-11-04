@@ -20,6 +20,13 @@ pub enum Outcome {
     Welcomed(Welcome),
     /// Send this reply (an `ack`, as JSON text).
     Reply(String),
+    /// Send this reply (the `ack`), and install `version` if it is the one this device reported.
+    Update {
+        /// The `ack`, as JSON text.
+        reply: String,
+        /// The version asked for.
+        version: String,
+    },
 }
 
 /// Turns the core's messages into calls on a [`Body`] and a [`TextDisplay`].
@@ -57,6 +64,9 @@ impl Dispatcher {
                 Outcome::Nothing
             }
             Message::Welcome(welcome) => Outcome::Welcomed(welcome),
+            Message::Intent(Intent::Update { version }) => {
+                Outcome::Update { reply: wire::ack(&received.id).to_string(), version }
+            }
             Message::Intent(intent) => {
                 match intent {
                     Intent::Behavior(behavior) => self.body.behavior(behavior),
@@ -67,6 +77,7 @@ impl Dispatcher {
                         Some(display) => display.show_text(&text, last),
                         None => debug!("intent.text without a text display: not shown"),
                     },
+                    Intent::Update { .. } => {} // handled above: the link installs it
                 }
                 Outcome::Reply(wire::ack(&received.id).to_string())
             }
@@ -163,6 +174,19 @@ mod tests {
                 "text Je regarde. false"
             ]
         );
+    }
+
+    #[test]
+    fn an_update_is_acknowledged_and_handed_to_the_link_not_the_body() {
+        let (body, dispatcher) = setup();
+        let Outcome::Update { reply, version } =
+            dispatcher.handle(&message("intent.update", json!({"version": "0.6.0"})))
+        else {
+            panic!("not handed to the link");
+        };
+        assert_eq!(version, "0.6.0");
+        assert_eq!(acked(Outcome::Reply(reply))["payload"], json!({"of": "intent-7"}));
+        assert_eq!(body.calls(), ["heartbeat"]);
     }
 
     #[test]
