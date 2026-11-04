@@ -28,7 +28,7 @@ use crate::i18n::Language;
 use crate::pairing::{Display, Enroller, Handed, Pairing, Presenter, TokenStore, Voice, code_for};
 use crate::protocol::{self, EnrollmentMethod, Manifest, PairingMethod};
 use crate::text::TextDisplay;
-use crate::update::{Restart, Updater, Updates};
+use crate::update::{GRACE, Restart, Updater, Updates};
 use crate::voice::{Audio, VoiceSetup};
 use crate::wire::{self, Welcome};
 #[cfg(feature = "voice")]
@@ -86,7 +86,7 @@ pub struct SatelliteBuilder {
     typed: bool,
     updater: Option<Arc<dyn Updater>>,
     restart: Option<Restart>,
-    update_grace: Option<Duration>,
+    update_grace: Duration,
 }
 
 impl Satellite {
@@ -120,7 +120,7 @@ impl Satellite {
             typed: false,
             updater: None,
             restart: None,
-            update_grace: None,
+            update_grace: GRACE,
         }
     }
 
@@ -290,9 +290,9 @@ impl Satellite {
                                     self.talk(session, token, &welcome, &mut tasks);
                                     if let Some(updates) = &self.updates {
                                         updates.welcomed();
-                                        if welcome.capabilities.contains(protocol::UPDATE) {
-                                            tasks.spawn(updates.clone().report(outbox.clone()));
-                                        }
+                                    }
+                                    if let Some(updates) = self.allowed_updates(&welcome) {
+                                        tasks.spawn(updates.report(outbox.clone()));
                                     }
                                     self.shared.set_welcome(welcome);
                                     self.shared.set_link(Some(outbox.clone()));
@@ -372,8 +372,7 @@ impl Satellite {
         installed: &mpsc::UnboundedSender<()>,
         tasks: &mut JoinSet<Result<()>>,
     ) {
-        let allowed = self.shared.welcome().is_some_and(|w| w.capabilities.contains(protocol::UPDATE));
-        let Some(updates) = self.updates.clone().filter(|_| allowed) else {
+        let Some(updates) = self.shared.welcome().and_then(|welcome| self.allowed_updates(&welcome)) else {
             debug!("intent.update without device.update allowed: ignored");
             return;
         };
@@ -384,6 +383,11 @@ impl Satellite {
             }
             Ok(())
         });
+    }
+
+    /// The updates, when this device updates itself and `welcome` allowed it (`device.update`).
+    fn allowed_updates(&self, welcome: &Welcome) -> Option<Arc<Updates>> {
+        self.updates.clone().filter(|_| welcome.capabilities.contains(protocol::UPDATE))
     }
 
     /// Offer audio for this link when the welcome allows some the device declared.
@@ -568,7 +572,7 @@ impl SatelliteBuilder {
     /// How long a version just installed has to be welcomed before going back to the one that ran
     /// before (default 60 s).
     pub fn update_grace(mut self, grace: Duration) -> Self {
-        self.update_grace = Some(grace);
+        self.update_grace = grace;
         self
     }
 
@@ -638,16 +642,10 @@ impl SatelliteBuilder {
         satellite.manifest = satellite.manifest.clone().with_pairing_methods(methods)?;
         let declared = satellite.manifest.capabilities().iter().map(|c| c.name().to_owned()).collect();
         satellite.shared = Arc::new(Shared { declared, ..Shared::default() });
-        if let Some(updater) = self.updater {
-            let mut updates = Updates::new(updater, satellite.manifest.software().clone(), satellite.tokens.path());
-            if let Some(restart) = self.restart {
-                updates.restart = restart;
-            }
-            if let Some(grace) = self.update_grace {
-                updates.grace = grace;
-            }
-            satellite.updates = Some(Arc::new(updates));
-        }
+        satellite.updates = self.updater.map(|updater| {
+            let software = satellite.manifest.software().clone();
+            Arc::new(Updates::new(updater, software, satellite.tokens.path(), self.restart, self.update_grace))
+        });
         Ok(self.satellite)
     }
 

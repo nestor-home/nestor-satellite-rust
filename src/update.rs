@@ -27,7 +27,7 @@ use crate::protocol::Software;
 use crate::wire::{self, UpdateState};
 
 /// How often the updater is asked again while the link is up.
-pub(crate) const CHECK_EVERY: Duration = Duration::from_secs(24 * 3600);
+const CHECK_EVERY: Duration = Duration::from_secs(24 * 3600);
 /// How long a new version has to be welcomed before going back to the one that ran before.
 pub(crate) const GRACE: Duration = Duration::from_secs(60);
 
@@ -60,6 +60,17 @@ pub trait Updater: Send + Sync + 'static {
 /// with the same arguments, as found when the satellite was built (Unix only; it returns only on
 /// failure). A driver under a supervisor may exit instead and let it start the program again.
 pub type Restart = Arc<dyn Fn() -> io::Result<()> + Send + Sync>;
+
+/// The program running now, with its arguments, captured before an update replaces it on disk
+/// (Linux then names it "(deleted)").
+fn reexec_this() -> Restart {
+    let program = std::env::current_exe();
+    let arguments: Vec<OsString> = std::env::args_os().skip(1).collect();
+    Arc::new(move || match &program {
+        Ok(program) => reexec(program, &arguments),
+        Err(error) => Err(io::Error::new(error.kind(), error.to_string())),
+    })
+}
 
 #[cfg(unix)]
 fn reexec(program: &Path, arguments: &[OsString]) -> io::Result<()> {
@@ -94,22 +105,22 @@ pub(crate) struct Updates {
     installing: AtomicBool,
     /// A link was welcomed since this run started.
     welcomed: AtomicBool,
-    pub(crate) grace: Duration,
-    pub(crate) every: Duration,
+    grace: Duration,
     pub(crate) restart: Restart,
 }
 
 impl Updates {
-    pub(crate) fn new(updater: Arc<dyn Updater>, software: Software, token_file: &Path) -> Self {
+    /// `restart` starts the version just installed (by default, the same program re-executed);
+    /// `grace` is how long it has to be welcomed.
+    pub(crate) fn new(
+        updater: Arc<dyn Updater>,
+        software: Software,
+        token_file: &Path,
+        restart: Option<Restart>,
+        grace: Duration,
+    ) -> Self {
         let mut pending = token_file.as_os_str().to_owned();
         pending.push(".update.json");
-        // The program is the one running now: once replaced on disk, Linux names it "(deleted)".
-        let program = std::env::current_exe();
-        let arguments: Vec<OsString> = std::env::args_os().skip(1).collect();
-        let restart: Restart = Arc::new(move || match &program {
-            Ok(program) => reexec(program, &arguments),
-            Err(error) => Err(io::Error::new(error.kind(), error.to_string())),
-        });
         Self {
             updater,
             software,
@@ -117,9 +128,8 @@ impl Updates {
             found: Mutex::new(None),
             installing: AtomicBool::new(false),
             welcomed: AtomicBool::new(false),
-            grace: GRACE,
-            every: CHECK_EVERY,
-            restart,
+            grace,
+            restart: restart.unwrap_or_else(reexec_this),
         }
     }
 
@@ -145,7 +155,7 @@ impl Updates {
         }
         loop {
             self.check(&outbox).await;
-            tokio::time::sleep(self.every).await;
+            tokio::time::sleep(CHECK_EVERY).await;
         }
     }
 
