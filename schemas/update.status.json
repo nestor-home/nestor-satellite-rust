@@ -1,0 +1,75 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://nestorhome.dev/schemas/satellite/1/update.status.json",
+  "title": "Where the device's own software stands, as found at its own source (needs `device.update`).",
+  "x-protocol": "nestor.satellite/1",
+  "x-direction": "to_core",
+  "type": "object",
+  "properties": {
+    "type": {
+      "const": "update.status"
+    },
+    "id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 64
+    },
+    "at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "payload": {
+      "type": "object",
+      "properties": {
+        "state": {
+          "enum": [
+            "current",
+            "available",
+            "installing",
+            "failed"
+          ]
+        },
+        "version": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64
+        },
+        "notes": {
+          "type": "string",
+          "minLength": 9,
+          "maxLength": 512,
+          "pattern": "^https://\\S+$"
+        }
+      },
+      "required": [
+        "state"
+      ],
+      "additionalProperties": false,
+      "if": {
+        "properties": {
+          "state": {
+            "const": "current"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "version": false,
+          "notes": false
+        }
+      },
+      "else": {
+        "required": [
+          "version"
+        ]
+      }
+    }
+  },
+  "required": [
+    "type",
+    "id",
+    "at",
+    "payload"
+  ],
+  "additionalProperties": false
+}

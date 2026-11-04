@@ -38,6 +38,7 @@ src/
 ├── dispatch.rs   Dispatcher: one link message → Body or TextDisplay call + ack (transport-agnostic)
 ├── body.rs       Body: what a driver implements to carry out intents (no-op defaults)
 ├── text.rs       TextDisplay: where the assistant's words are shown (text.display)
+├── update.rs     Updater: the driver's own software, reported and installed on request (device.update)
 ├── voice.rs      WebRTC audio offered once welcomed, offered again while the link is up (feature `voice`)
 ├── voiceless.rs  `voice` without the feature: nothing to open, no device code said (keeps `cfg` out of the
 │                 link and pairing)
@@ -58,7 +59,7 @@ tests/            schemas, fake-core client tests (support/: the fake core, HTTP
    is only used by the conformance test, as the published `nestor-home` package (`.nestor-version`).
 2. **Refreshing the schemas.** `schemas/` is a copy of the schemas of the `nestor-home` release in
    `.nestor-version`. The standard itself is https://nestorhome.dev/docs/satellites/protocol/ (rules N1,
-   P1-P8, I1-I3, L1-L5, T1-T4, A1-A4). To refresh:
+   P1-P8, I1-I3, L1-L5, T1-T4, U1-U3, A1-A4). To refresh:
    `uvx --from nestor-home=="$(cat .nestor-version)" nestor satellites schemas --out schemas/`, then adapt
    `protocol.rs`/`wire.rs` until `cargo test` passes. Every message the SDK sends is validated
    against these schemas, and the decoder must refuse what they refuse.
@@ -96,8 +97,12 @@ tests/            schemas, fake-core client tests (support/: the fake core, HTTP
 11. **No QR code.** This SDK drives no camera: `enrollment.qr` is not a `PairingMethod` here, so no
    path declares it.
 12. **Capabilities follow what is given.** `text.display` from a `TextDisplay`, `text.input` from
-   `text_input()`, `audio.capture` from a source, `audio.playback` from a sink. A manifest declaring
-   one of them without it is refused (`Error::NotProvided`).
+   `text_input()`, `audio.capture` from a source, `audio.playback` from a sink, `device.update` from
+   an `Updater`. A manifest declaring one of them without it is refused (`Error::NotProvided`).
+13. **The core never chooses what is installed.** An `Updater` asks the software's own source; the
+   satellite installs only the newer version it found and reported, never one the core names, never
+   an older one. A new version not welcomed within the grace period (60 s) reinstalls the one that ran
+   before. The crate ships no updater: a driver gives one for the way its software is installed.
 
 ## Conformance
 

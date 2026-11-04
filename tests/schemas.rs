@@ -77,6 +77,7 @@ fn the_sdk_knows_every_value_the_core_may_send() {
             wire::INTENT_EXPRESSION,
             wire::INTENT_IDENTIFY,
             wire::INTENT_TEXT,
+            wire::INTENT_UPDATE,
             wire::WELCOME
         ]
     );
@@ -113,6 +114,10 @@ fn what_the_sdk_sends_follows_the_schemas() {
         wire::person_detected(2, 0.75).unwrap(),
         wire::person_detected(0, 1.0).unwrap(),
         wire::speech_activity(true),
+        wire::update_status(wire::UpdateState::Current, None).unwrap(),
+        wire::update_status(wire::UpdateState::Available, Some("0.6.0")).unwrap(),
+        wire::update_status(wire::UpdateState::Installing, Some("0.6.0")).unwrap(),
+        wire::update_status(wire::UpdateState::Failed, Some("0.6.0")).unwrap(),
     ];
     for message in sent {
         let name = format!("{}.json", message["type"].as_str().unwrap());
@@ -136,6 +141,7 @@ fn from_core() -> Vec<Value> {
         json!({"type": "intent.identify", "id": "m-6", "at": at, "payload": {}}),
         json!({"type": "intent.text", "id": "m-7", "at": at, "payload": {"text": "Je regarde.", "final": false}}),
         json!({"type": "intent.text", "id": "m-8", "at": at, "payload": {"text": "Il fait 21 °C."}}),
+        json!({"type": "intent.update", "id": "m-9", "at": at, "payload": {"version": "0.6.0"}}),
     ]
 }
 

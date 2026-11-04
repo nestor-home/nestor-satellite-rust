@@ -39,6 +39,7 @@ pub mod protocol;
 #[cfg(feature = "voice")]
 mod speech;
 pub mod text;
+pub mod update;
 #[cfg(feature = "voice")]
 mod voice;
 #[cfg(not(feature = "voice"))]
@@ -56,7 +57,8 @@ pub use i18n::Language;
 pub use pairing::{Display, Enroller, TokenStore, Voice};
 pub use protocol::{
     AUDIO_CAPTURE, AUDIO_PLAYBACK, Behavior, Capability, Device, EXPRESSION, EnrollmentMethod, Expression, HEAD_MOTION,
-    IDENTIFY, Manifest, PERSON_DETECTION, PROTOCOL, PairingMethod, ProtocolError, SPEECH_ACTIVITY, Sdk, TEXT_DISPLAY,
-    TEXT_INPUT,
+    IDENTIFY, Manifest, PERSON_DETECTION, PROTOCOL, PairingMethod, ProtocolError, SPEECH_ACTIVITY, Software,
+    TEXT_DISPLAY, TEXT_INPUT, UPDATE,
 };
 pub use text::TextDisplay;
+pub use update::{Restart, UpdateError, Updater};

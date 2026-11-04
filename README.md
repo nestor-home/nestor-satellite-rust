@@ -64,6 +64,13 @@ async fn main() -> nestor_satellite::Result<()> {
 }
 ```
 
+A driver that updates itself when a person asks in Nestor gives an `Updater` (where its package
+comes from, how a version is installed) and names its package in the manifest:
+`Manifest::new(device, [IDENTIFY])?.with_software(Software::new("my-driver", env!("CARGO_PKG_VERSION"))?)`,
+then `.updater(my_updater)` on the builder. It reports newer versions once connected and once a day,
+installs only the one it found, starts again on it, and goes back if the new one is not welcomed
+within 60 s.
+
 The command, with nothing to write (a microphone and a speaker, or the terminal):
 
 ```bash

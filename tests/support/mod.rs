@@ -31,7 +31,7 @@ pub enum Codes {
 /// A core that hands out device codes, approves a pending pairing after `pending` polls (unless
 /// `never_approve`), judges enrollment codes per `codes`, and holds links: it accepts the tokens it
 /// handed out (`nst1_p…`) and closes the link with 4401 for any other, welcomes the device with
-/// what it declared but `withheld`, sends `script`, and closes each link with the next code of
+/// what it declared but `withheld`, sends `script` (`script_after` the welcome), and closes each link with the next code of
 /// `closes` (if any) `close_after` the welcome. Audio offers are noted and answered 503 (401 when `audio_refused`).
 #[derive(Default)]
 pub struct FakeCore {
@@ -43,6 +43,7 @@ pub struct FakeCore {
     pub unsupported: bool,
     pub withheld: Vec<&'static str>,
     pub script: Vec<Value>,
+    pub script_after: Duration,
     pub closes: Mutex<VecDeque<u16>>,
     pub close_after: Duration,
     /// Audio offers are answered 401, as for a revoked token.
@@ -224,6 +225,7 @@ async fn linked(core: Arc<FakeCore>, mut socket: WebSocket) {
         .collect();
     let welcome = json!({"device_id": manifest["device"]["id"], "room": "salon", "capabilities": allowed});
     send(&mut socket, &envelope("welcome", "w-1", welcome)).await;
+    tokio::time::sleep(core.script_after).await;
     for message in &core.script {
         send(&mut socket, message).await;
     }

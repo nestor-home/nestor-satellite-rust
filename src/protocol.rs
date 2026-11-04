@@ -33,6 +33,10 @@ pub const SPEECH_ACTIVITY: &str = "audio.speech_activity";
 /// The device can make itself noticed (blink, wiggle, chime) when a person asks which one it is
 /// (`intent.identify`, and `identify` in a pending pairing's answer). An aid, never a proof.
 pub const IDENTIFY: &str = "device.identify";
+/// The device installs a newer version of its own software when a person asks (`intent.update`),
+/// and reports where it stands (`update.status`). Declared when the driver gives an
+/// [`Updater`](crate::Updater).
+pub const UPDATE: &str = "device.update";
 
 /// At most this many capabilities in a manifest.
 pub const MAX_CAPABILITIES: usize = 32;
@@ -258,28 +262,29 @@ impl Device {
     }
 }
 
-/// The software a device runs, as it names it.
+/// The software a device runs, named as its package is where it is installed from (`nestor-satellite`
+/// `0.5.2`). A device that updates itself installs newer versions of this package.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
-pub struct Sdk {
+pub struct Software {
     name: String,
     version: String,
 }
 
-impl Sdk {
+impl Software {
     /// A software name and version, each 1 to 64 characters.
     pub fn new(name: impl Into<String>, version: impl Into<String>) -> Result<Self, ProtocolError> {
         let (name, version) = (name.into(), version.into());
         for (key, value) in [("name", &name), ("version", &version)] {
             if value.is_empty() || value.chars().count() > MAX_TEXT {
-                return Err(ProtocolError::new(format!("sdk {key} must be 1 to 64 characters")));
+                return Err(ProtocolError::new(format!("software {key} must be 1 to 64 characters")));
             }
         }
         Ok(Self { name, version })
     }
 
-    /// This SDK: `nestor-satellite-rust` and its version.
+    /// This crate: `nestor-satellite` and its version.
     pub fn this() -> Self {
-        Self { name: "nestor-satellite-rust".to_owned(), version: env!("CARGO_PKG_VERSION").to_owned() }
+        Self { name: env!("CARGO_PKG_NAME").to_owned(), version: env!("CARGO_PKG_VERSION").to_owned() }
     }
 
     /// The software name.
@@ -348,12 +353,12 @@ impl Serialize for Capability {
 pub struct Manifest {
     device: Device,
     capabilities: Vec<Capability>,
-    sdk: Option<Sdk>,
+    software: Software,
     pairing_methods: BTreeSet<PairingMethod>,
 }
 
 impl Manifest {
-    /// A manifest declaring capabilities by name; it names this SDK ([`Sdk::this`]).
+    /// A manifest declaring capabilities by name; it names this crate ([`Software::this`]).
     pub fn new<I, S>(device: Device, capabilities: I) -> Result<Self, ProtocolError>
     where
         I: IntoIterator<Item = S>,
@@ -363,7 +368,7 @@ impl Manifest {
         Self::with_capabilities(device, capabilities)
     }
 
-    /// A manifest declaring capabilities with parameters; it names this SDK ([`Sdk::this`]).
+    /// A manifest declaring capabilities with parameters; it names this crate ([`Software::this`]).
     pub fn with_capabilities(device: Device, capabilities: Vec<Capability>) -> Result<Self, ProtocolError> {
         if capabilities.len() > MAX_CAPABILITIES {
             return Err(ProtocolError::new(format!("at most {MAX_CAPABILITIES} capabilities")));
@@ -375,7 +380,7 @@ impl Manifest {
         Ok(Self {
             device,
             capabilities,
-            sdk: Some(Sdk::this()),
+            software: Software::this(),
             pairing_methods: BTreeSet::from([PairingMethod::EnrollmentProvisioning]),
         })
     }
@@ -406,9 +411,10 @@ impl Manifest {
         Ok(self)
     }
 
-    /// Names another software than this SDK (a driver framework built on it), or none.
-    pub fn with_sdk(mut self, sdk: Option<Sdk>) -> Self {
-        self.sdk = sdk;
+    /// Names the software the device runs, when it is not this crate's command: a driver names its
+    /// own package, the one an [`Updater`](crate::Updater) installs.
+    pub fn with_software(mut self, software: Software) -> Self {
+        self.software = software;
         self
     }
 
@@ -422,9 +428,9 @@ impl Manifest {
         &self.capabilities
     }
 
-    /// The software named in the manifest.
-    pub fn sdk(&self) -> Option<&Sdk> {
-        self.sdk.as_ref()
+    /// The software the device runs.
+    pub fn software(&self) -> &Software {
+        &self.software
     }
 
     /// The declared pairing methods, in the schema's order.
@@ -448,9 +454,7 @@ impl Manifest {
         data.insert("protocol".to_owned(), Value::String(PROTOCOL.to_owned()));
         data.insert("device".to_owned(), to_value(&self.device));
         data.insert("capabilities".to_owned(), Value::Array(self.capabilities.iter().map(to_value).collect()));
-        if let Some(sdk) = &self.sdk {
-            data.insert("sdk".to_owned(), to_value(sdk));
-        }
+        data.insert("software".to_owned(), to_value(&self.software));
         let methods = self.pairing_methods.iter().map(|m| Value::String(m.as_str().to_owned())).collect();
         data.insert("pairing_methods".to_owned(), Value::Array(methods));
         Value::Object(data)
@@ -535,14 +539,16 @@ mod tests {
                 "protocol": "nestor.satellite/1",
                 "device": {"id": "enceinte-salon", "model": "raspberry-pi-4", "room": "salon", "brand": "raspberry"},
                 "capabilities": [{"name": "audio.capture", "formats": ["opus/48000"]}],
-                "sdk": {"name": "nestor-satellite-rust", "version": env!("CARGO_PKG_VERSION")},
+                "software": {"name": "nestor-satellite", "version": env!("CARGO_PKG_VERSION")},
                 "pairing_methods": ["enrollment.provisioning"],
             })
         );
         assert!(manifest.declares(AUDIO_CAPTURE) && !manifest.declares(AUDIO_PLAYBACK));
-        let bare = Manifest::new(device(), [AUDIO_PLAYBACK]).unwrap().with_sdk(None);
-        assert!(bare.to_json().get("sdk").is_none());
+        let driver = Software::new("nestor-reachy", "0.4.0").unwrap();
+        let bare = Manifest::new(device(), [AUDIO_PLAYBACK]).unwrap().with_software(driver);
+        assert_eq!(bare.to_json()["software"], json!({"name": "nestor-reachy", "version": "0.4.0"}));
         assert!(bare.to_json()["device"].get("brand").is_none());
+        assert!(Software::new("", "1.0.0").is_err() && Software::new("x", "1".repeat(65)).is_err());
     }
 
     #[test]
