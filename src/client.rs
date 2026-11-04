@@ -337,6 +337,14 @@ impl Satellite {
         };
 
         tasks.shutdown().await;
+        if let End::Updated = end {
+            // `select!` may take the end of the install before the statuses it queued (`installing`).
+            while let Ok(message) = outgoing.try_recv() {
+                if write.send(Frame::text(message)).await.is_err() {
+                    break;
+                }
+            }
+        }
         if self.shared.set_link(None) {
             self.body.connected(false);
         }
