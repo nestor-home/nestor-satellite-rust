@@ -104,6 +104,7 @@ async fn the_newer_version_it_found_is_reported_installed_when_asked_and_started
     assert!(satellite.manifest().declares(UPDATE), "an updater declares device.update");
 
     satellite.run().await.unwrap();
+    wait_for(|| statuses(&core).len() == 2).await; // the core reads the last frames on its own task
 
     assert_eq!(restarts.load(Ordering::SeqCst), 1, "started again on the new version");
     assert_eq!(shelf.installed(), ["0.2.0"]);
