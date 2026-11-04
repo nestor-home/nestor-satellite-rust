@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.5.2](https://github.com/nestor-home/nestor-satellite-rust/compare/v0.5.1...v0.5.2) (2026-11-04)
+
+
+### Bug Fixes
+
+* **deps:** update rust crate tokio-tungstenite to 0.30.0 ([#25](https://github.com/nestor-home/nestor-satellite-rust/issues/25)) ([5c84d91](https://github.com/nestor-home/nestor-satellite-rust/commit/5c84d91b8170cfd65c8350c014557b3b3d4e3fb9))
+
 ## [0.5.1](https://github.com/nestor-home/nestor-satellite-rust/compare/v0.5.0...v0.5.1) (2026-11-03)
 
 
