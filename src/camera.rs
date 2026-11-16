@@ -2,7 +2,7 @@
 //! for the still pictures they ask for.
 //!
 //! A [`Camera`] gives images; the SDK opens it when the first session or picture needs it and closes
-//! it after the last, encodes its images in H.264 for WebRTC and in JPEG for still pictures.
+//! it after the last, encodes its images in VP8 for WebRTC and in JPEG for still pictures.
 //! `V4l2Camera` (Linux) reads a camera (a USB webcam, the Raspberry Pi camera through its V4L2
 //! driver); [`TestPattern`] films colour bars, for tests and for trying a satellite without one.
 

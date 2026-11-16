@@ -1,5 +1,5 @@
 //! The camera in sessions and still pictures (feature `video`): one [`Camera`] shared by every session
-//! that films and the pictures asked meanwhile, its images encoded in H.264 for WebRTC and in JPEG.
+//! that films and the pictures asked meanwhile, its images encoded in VP8 for WebRTC and in JPEG.
 //!
 //! [`CameraFeed`] switches the camera on for the first user and off after the last, so it is on only
 //! while something is sent; each user gets the latest image, never a backlog.
@@ -7,13 +7,11 @@
 use std::sync::Arc;
 use std::time::Duration;
 
-use openh264::OpenH264API;
-use openh264::encoder::{BitRate, Encoder, EncoderConfig, FrameRate};
-use openh264::formats::YUVSlices;
 use tokio::sync::{Mutex, watch};
 use tokio::task::JoinHandle;
 use tokio::time::Instant;
 use tracing::{debug, warn};
+use vp8_encoder::{Encoder, EncoderConfig, Picture};
 
 use crate::camera::{Camera, CameraError, Frame, PixelFormat};
 use crate::error::{Error, Result};
@@ -146,45 +144,59 @@ fn dimension(pixels: u32) -> Result<u16> {
     u16::try_from(pixels).map_err(|_| Error::Video(format!("{pixels} pixels: too large for a JPEG")))
 }
 
-/// Encodes the camera's images in H.264, constrained baseline (what browsers and the core decode),
-/// with a key frame every [`KEY_FRAMES`].
-pub(crate) struct H264 {
-    encoder: Encoder,
+/// The bit rate VP8 aims at.
+const BITRATE_BPS: u32 = 1_500_000;
+/// The frame rate VP8's rate control assumes; the camera sets the real pace.
+const FPS: u32 = 30;
+
+/// Encodes the camera's images in VP8 (RFC 6386: royalty-free, what browsers and the core decode),
+/// with a key frame every [`KEY_FRAMES`]. The encoder is made again when the images change size.
+pub(crate) struct Vp8 {
+    encoder: Option<(Encoder, (u32, u32))>,
     keyed: Option<Instant>,
     planes: [Vec<u8>; 3],
+    i420: Vec<u8>,
 }
 
-impl H264 {
-    pub(crate) fn new() -> Result<Self> {
-        let config =
-            EncoderConfig::new().bitrate(BitRate::from_bps(1_500_000)).max_frame_rate(FrameRate::from_hz(30.0));
-        let encoder = Encoder::with_api_config(OpenH264API::from_source(), config).map_err(h264)?;
-        Ok(Self { encoder, keyed: None, planes: Default::default() })
+impl Vp8 {
+    pub(crate) fn new() -> Self {
+        Self { encoder: None, keyed: None, planes: Default::default(), i420: Vec::new() }
     }
 
-    /// One image as an Annex B access unit (empty when the encoder skips it).
+    /// One image as a VP8 frame, from its frame tag (empty when rate control skips it).
     pub(crate) fn encode(&mut self, image: &Frame) -> Result<Vec<u8>> {
         let (width, height) = i420(image, &mut self.planes);
         if width == 0 || height == 0 {
             return Err(Error::Video("an image too small to encode".into()));
         }
+        let size = (width as u32, height as u32);
+        let encoder = match &mut self.encoder {
+            Some((encoder, made)) if *made == size => encoder,
+            slot => {
+                let config = EncoderConfig::new(size.0, size.1, FPS, BITRATE_BPS);
+                self.keyed = None; // a new encoder starts with a key frame
+                &mut slot.insert((Encoder::new(config).map_err(vp8)?, size)).0
+            }
+        };
         let now = Instant::now();
-        if self.keyed.is_some_and(|keyed| now - keyed >= KEY_FRAMES) {
-            self.encoder.force_intra_frame();
+        let key = self.keyed.is_some_and(|keyed| now - keyed >= KEY_FRAMES);
+        self.i420.clear();
+        self.planes.iter().for_each(|plane| self.i420.extend_from_slice(plane));
+        let picture =
+            Picture::from_i420(&self.i420, size.0, size.1).ok_or(Error::Video("VP8: a short picture".into()))?;
+        let Some(frame) = encoder.encode(&picture, key).map_err(vp8)? else { return Ok(Vec::new()) };
+        if frame.keyframe || self.keyed.is_none() {
             self.keyed = Some(now);
         }
-        self.keyed.get_or_insert(now);
-        let [y, u, v] = &self.planes;
-        let source = YUVSlices::new((y, u, v), (width, height), (width, width / 2, width / 2));
-        Ok(self.encoder.encode(&source).map_err(h264)?.to_vec())
+        Ok(frame.data)
     }
 }
 
-fn h264(error: openh264::Error) -> Error {
-    Error::Video(format!("H.264: {error}"))
+fn vp8(error: vp8_encoder::EncodeError) -> Error {
+    Error::Video(format!("VP8: {error}"))
 }
 
-/// `image` in I420 (BT.601, limited range, as H.264 decoders assume) into `planes`, cropped to even
+/// `image` in I420 (BT.601, limited range, as video decoders assume) into `planes`, cropped to even
 /// dimensions; those dimensions.
 fn i420(image: &Frame, planes: &mut [Vec<u8>; 3]) -> (usize, usize) {
     let (width, height) = (image.width() as usize & !1, image.height() as usize & !1);
@@ -276,17 +288,25 @@ mod tests {
         assert_eq!(*lens.0.lock().unwrap(), ["on", "off", "on", "off"], "on just for the picture");
     }
 
-    #[test]
-    fn images_encode_in_h264_with_their_parameters_first() {
-        let mut encoder = H264::new().unwrap();
-        let image = Frame::new(64, 48, PixelFormat::Rgb, vec![120; 64 * 48 * 3]).unwrap();
-        let first = encoder.encode(&image).unwrap();
-        let nal_types: Vec<u8> =
-            openh264::nal_units(&first).map(|nal| nal[nal.iter().position(|&b| b == 1).unwrap() + 1] & 0x1f).collect();
-        assert_eq!(&nal_types[..2], [7, 8], "SPS and PPS before the first picture: {nal_types:?}");
-        assert!(nal_types.contains(&5), "the first picture is a key frame");
+    #[tokio::test(start_paused = true)]
+    async fn images_encode_in_vp8_starting_and_then_regularly_with_a_key_frame() {
+        let mut encoder = Vp8::new();
+        let image = TestPattern::new(64, 48, 30).read().await.unwrap();
+        let mut decoder = vp8_decoder::Decoder::new();
+        let mut key_frames = Vec::new();
+        for _ in 0..30 {
+            let frame = encoder.encode(&image).unwrap();
+            let info = vp8_decoder::frame_info(&frame).unwrap();
+            key_frames.push(info.keyframe);
+            let picture = decoder.decode(&frame).unwrap().unwrap();
+            assert_eq!((picture.width, picture.height), (64, 48), "a VP8 frame of the image's size");
+            tokio::time::advance(Duration::from_millis(100)).await;
+        }
+        let at: Vec<usize> = key_frames.iter().enumerate().filter(|(_, key)| **key).map(|(i, _)| i).collect();
+        assert_eq!(at, [0, 20], "the first, then one every 2 s");
         let odd = Frame::new(63, 47, PixelFormat::Rgb, vec![120; 63 * 47 * 3]).unwrap();
-        assert!(!encoder.encode(&odd).unwrap().is_empty(), "odd sizes are cropped");
+        let resized = encoder.encode(&odd).unwrap();
+        assert!(vp8_decoder::frame_info(&resized).unwrap().keyframe, "a new size starts with a key frame");
     }
 
     #[tokio::test]

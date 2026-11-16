@@ -20,7 +20,7 @@ headers for the `audio` feature (`libasound2-dev pkg-config`).
 
 Features: none by default (pairing, the WebSocket link, intents, observations, text); `voice` adds
 WebRTC audio (`webrtc`, `rtc`, `opus`), the bundled voice and calls; `audio` adds cpal devices on top of
-`voice`; `video` adds the camera on top of `voice` (OpenH264 built from source, `jpeg-encoder`,
+`voice`; `video` adds the camera on top of `voice` (`vp8-encoder` and `jpeg-encoder`, pure Rust,
 `linuxvideo` on Linux); `cli` is the command, on top of `audio` and `video`. Nothing of `voice` may leak into the default build. Add dependencies with `cargo add`,
 pin them to a full version, and commit `Cargo.lock`.
 
@@ -41,9 +41,9 @@ src/
 ├── text.rs       TextDisplay: where the assistant's words are shown (text.display)
 ├── update.rs     Updater: the driver's own software, reported and installed on request (device.update)
 ├── sessions.rs   MediaSessions: rules M1-M3, M5, M6 of media sessions (every build), VoiceHold, MediaIndicator
-├── session.rs    the WebRTC connection of one session: H.264 video, a call both ways (feature `voice`)
+├── session.rs    the WebRTC connection of one session: VP8 video, a call both ways (feature `voice`)
 ├── camera.rs     Camera trait, Frame, TestPattern, V4l2Camera on Linux (feature `video`)
-├── video.rs      CameraFeed (on only while used), H.264 and JPEG encoding (feature `video`)
+├── video.rs      CameraFeed (on only while used), VP8 and JPEG encoding (feature `video`)
 ├── voice.rs      WebRTC audio offered once welcomed, offered again while the link is up (feature `voice`)
 ├── voiceless.rs  `voice` without the feature: nothing to open, no device code said (keeps `cfg` out of the
 │                 link and pairing)

@@ -16,7 +16,7 @@ Nestor server.
 | (none)  | pairing, the link, intents, observations, text (`text.input`, `text.display`)           |
 | `voice` | WebRTC audio (Opus) with your own `AudioSource`/`AudioSink`, the device code said aloud, calls |
 | `audio` | `voice` with the machine's microphone and speaker (cpal)                                |
-| `video` | `voice` with a `Camera` filmed in H.264 (OpenH264) and still pictures in JPEG           |
+| `video` | `voice` with a `Camera` filmed in VP8 (pure Rust) and still pictures in JPEG            |
 | `cli`   | the `nestor-satellite` command                                                          |
 
 Capabilities follow what the satellite is given: a text display declares `text.display`,
@@ -104,8 +104,8 @@ nestor-satellite run --core http://nestor.local:8471 --room bureau --text-only  
 nestor-satellite run --core https://nestor.example.org --room entree --camera /dev/video0  # watched, called
 ```
 
-Building needs Rust 1.91+ and a C compiler; the `voice` feature also needs `cmake`, the `video`
-feature a C++ compiler (OpenH264 is built from source), and on Linux the `audio` feature ALSA (`apt install libasound2-dev pkg-config`). The recorded voice that says device
+Building needs Rust 1.91+ and a C compiler; the `voice` feature also needs `cmake`, and on Linux
+the `audio` feature ALSA (`apt install libasound2-dev pkg-config`). The recorded voice that says device
 codes is shared under CC BY 4.0: see [`voice/LICENSE`](voice/LICENSE).
 
 ## Development

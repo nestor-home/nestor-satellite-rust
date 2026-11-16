@@ -86,7 +86,7 @@ pub enum Error {
     #[cfg(feature = "video")]
     #[error(transparent)]
     Camera(#[from] crate::camera::CameraError),
-    /// An image could not be encoded (H.264, JPEG).
+    /// An image could not be encoded (VP8, JPEG).
     #[cfg(feature = "video")]
     #[error("video: {0}")]
     Video(String),

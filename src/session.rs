@@ -2,7 +2,7 @@
 //!
 //! Asked by the core on the link, the satellite connects for that session
 //! (`POST /satellites/{device_id}/media`, its token and the session's id, its ICE gathering complete):
-//! the camera's video in H.264 when the session films, and for a call its microphone while it plays
+//! the camera's video in VP8 when the session films, and for a call its microphone while it plays
 //! what the core sends. It only ever connects out; [`crate::sessions`] keeps the rules of when.
 
 use std::sync::Arc;
@@ -90,7 +90,7 @@ impl Connection {
                 let camera = self.audio.camera.clone().ok_or(Error::Link("no camera to film with"))?;
                 let images = camera.open().await?;
                 *filming = true;
-                let track = local_track(device, "camera", RtpCodecKind::Video, h264_codec())?;
+                let track = local_track(device, "camera", RtpCodecKind::Video, vp8_codec())?;
                 let sender = peer.add_track(track.clone() as Arc<dyn TrackLocal>).await?;
                 let mut state = signals.state.clone();
                 tasks.spawn(async move {
@@ -153,26 +153,26 @@ impl Connection {
     }
 }
 
-/// Opus for calls, H.264 constrained baseline for the camera: what the core decodes, nothing else.
+/// Opus for calls, VP8 for the camera: what the core decodes, nothing else.
 fn engine() -> Result<MediaEngine> {
     let mut engine = MediaEngine::default();
     engine.register_codec(RTCRtpCodecParameters { rtp_codec: opus_codec(), payload_type: 111 }, RtpCodecKind::Audio)?;
-    engine.register_codec(RTCRtpCodecParameters { rtp_codec: h264_codec(), payload_type: 125 }, RtpCodecKind::Video)?;
+    engine.register_codec(RTCRtpCodecParameters { rtp_codec: vp8_codec(), payload_type: 96 }, RtpCodecKind::Video)?;
     Ok(engine)
 }
 
-fn h264_codec() -> RTCRtpCodec {
+fn vp8_codec() -> RTCRtpCodec {
     let feedback = |typ: &str, parameter: &str| RTCPFeedback { typ: typ.to_owned(), parameter: parameter.to_owned() };
     RTCRtpCodec {
-        mime_type: rtc::peer_connection::configuration::media_engine::MIME_TYPE_H264.to_owned(),
+        mime_type: rtc::peer_connection::configuration::media_engine::MIME_TYPE_VP8.to_owned(),
         clock_rate: 90_000,
         channels: 0,
-        sdp_fmtp_line: "level-asymmetry-allowed=1;packetization-mode=1;profile-level-id=42e01f".to_owned(),
+        sdp_fmtp_line: String::new(),
         rtcp_feedback: vec![feedback("nack", ""), feedback("nack", "pli"), feedback("ccm", "fir")],
     }
 }
 
-/// Sends the camera's latest images, encoded in H.264, until the camera stops or the task is aborted.
+/// Sends the camera's latest images, encoded in VP8, until the camera stops or the task is aborted.
 #[cfg(feature = "video")]
 async fn film(
     mut images: crate::video::Images,
@@ -191,7 +191,7 @@ async fn film(
         .map(|codec| codec.payload_type)
         .ok_or(Error::Link("no video codec negotiated"))?;
     let ssrc = *track.ssrcs().await.first().ok_or(Error::Link("the video track has no SSRC"))?;
-    let mut encoder = Some(crate::video::H264::new()?);
+    let mut encoder = Some(crate::video::Vp8::new());
     let mut last: Option<std::time::Instant> = None;
     loop {
         images.changed().await.map_err(|_| Error::Video("the camera stopped".into()))?;

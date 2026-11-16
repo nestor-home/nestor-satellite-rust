@@ -29,8 +29,9 @@ voice = ["dep:bytes", "dep:opus", "dep:rtc", "dep:webrtc"]
 # The machine's microphone and speaker through cpal.
 audio = ["voice", "dep:cpal"]
 # Filming in the sessions a person opens: a Camera (V4L2 on Linux, or a test pattern) sent over WebRTC
-# in H.264 (OpenH264, built from source), and still pictures in JPEG. Calls need `voice` only.
-video = ["voice", "dep:openh264", "dep:jpeg-encoder", "dep:linuxvideo"]
+# in VP8 (a pure Rust encoder: no C library to build or install), and still pictures in JPEG. Calls
+# need `voice` only.
+video = ["voice", "dep:vp8-encoder", "dep:jpeg-encoder", "dep:linuxvideo"]
 # The `nestor-satellite` command: a microphone + speaker satellite, or a text one in the terminal,
 # filming with --camera.
 cli = ["audio", "video", "dep:clap", "dep:gethostname", "dep:tracing-subscriber"]
@@ -61,16 +62,16 @@ gethostname = { version = "1.1.0", optional = true }
 tracing-subscriber = { version = "0.3.23", features = ["env-filter", "fmt"], optional = true }
 ring = "0.17.14"
 base64 = "0.22.1"
-openh264 = { version = "0.9.10", optional = true }
 jpeg-encoder = { version = "0.7.1", optional = true }
+vp8-encoder = { version = "0.1.1", optional = true }
 
-# V4L2 cameras (feature `video`), in pure Rust.
 [dev-dependencies]
 axum = { version = "0.8.9", features = ["ws"] }
 jsonschema = { version = "0.61.0", default-features = false }
 tempfile = "3.27.0"
 tokio = { version = "1.54.1", features = ["test-util", "macros", "rt-multi-thread"] }
 tracing-subscriber = { version = "0.3.23", default-features = false, features = ["fmt", "std"] }
+vp8-decoder = "0.1.1"
 
 [lints.rust]
 unsafe_code = "forbid"

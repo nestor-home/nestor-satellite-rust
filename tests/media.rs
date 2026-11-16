@@ -249,7 +249,7 @@ mod filming {
         let jpeg = base64::engine::general_purpose::STANDARD.decode(picture["jpeg"].as_str().unwrap()).unwrap();
         assert_eq!(jpeg[..2], [0xff, 0xd8], "a JPEG");
         let sdp = core.media_offers()[0].1["sdp"].as_str().unwrap().to_owned();
-        assert!(sdp.contains("m=video") && sdp.contains("H264") && !sdp.contains("m=audio"), "{sdp}");
+        assert!(sdp.contains("m=video") && sdp.contains("VP8") && !sdp.contains("m=audio"), "{sdp}");
         assert_eq!(lens.switched(), ["on", "off", "on", "off"]);
         assert_eq!(light.shown(), [true, false, true, false]);
     }
