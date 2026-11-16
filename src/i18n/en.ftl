@@ -28,7 +28,7 @@ error-token-refused = Nestor no longer knows this device: pair it again.
 error-replaced = Another connection of this device took over: this one stops.
 error-unreachable = Nestor cannot be reached.
 
-link-insecure = Nestor accepts this device only over a secure connection, since it may film: reach Nestor over https.
+link-insecure = Nestor does not let this device film over a plain connection: reach Nestor over https.
 media-refused = Nestor asked for a camera or a call this device was not allowed or cannot give: refused.
 media-failed = A session with Nestor failed ({ $error }).
 media-timed-out = The session reached its { $seconds } s limit: ended.

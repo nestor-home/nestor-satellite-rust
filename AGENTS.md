@@ -113,7 +113,7 @@ tests/            schemas, fake-core client tests (support/: the fake core, HTTP
    (anything more is acknowledged, logged and refused whole), one call at a time, an end at `close`,
    `max_s` (its own clock) and when the link closes, the indicator on before the offer and off once
    nothing is sent, the voice hung up during a call and offered again after, a still picture as
-   `media.snapshot` of the intent, no listening port (a test scans `src/`), a 4403 close retried.
+   `media.snapshot` of the intent, no listening port (a test scans `src/`), a warning when a plain link is not allowed to film.
    The camera is on only while a session or a picture uses it.
 
 ## Conformance

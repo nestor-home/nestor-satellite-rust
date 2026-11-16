@@ -49,8 +49,6 @@ pub const PAIRING_CODE_ENV: &str = "NESTOR_PAIRING_CODE";
 /// The core closes a link with these (L2, L4, L5).
 const OFF_CONTRACT: u16 = 4400;
 const TOKEN_REFUSED: u16 = 4401;
-/// A device allowed to film links over TLS only, unless on the core's machine (M7).
-const INSECURE: u16 = 4403;
 const REPLACED: u16 = 4409;
 /// The core pings every 20 s: this long without hearing from it, the link is lost (L4).
 const LINK_SILENCE: Duration = Duration::from_secs(60);
@@ -298,6 +296,13 @@ impl Satellite {
                                 if !welcomed {
                                     welcomed = true;
                                     self.shared.connections.fetch_add(1, Ordering::SeqCst);
+                                    if self.manifest.declares(protocol::VIDEO_CAPTURE)
+                                        && url.starts_with("ws:")
+                                        && !welcome.capabilities.contains(protocol::VIDEO_CAPTURE)
+                                    {
+                                        // M7: over a plain link the core does not let the device film.
+                                        warn!("{}", self.presenter.language.say("link-insecure", &[]));
+                                    }
                                     media = Some(self.media(session, token, &welcome, &outbox, &refusal));
                                     if let Some(updates) = &self.updates {
                                         updates.welcomed();
@@ -373,10 +378,6 @@ impl Satellite {
             End::Closed(Some(REPLACED)) => {
                 warn!("a newer link of this device replaced this one: stopping");
                 Err(Error::Replaced)
-            }
-            End::Closed(Some(INSECURE)) => {
-                warn!("{}", self.presenter.language.say("link-insecure", &[]));
-                Ok(Linked::Ended { welcomed })
             }
             End::Closed(Some(OFF_CONTRACT)) => {
                 warn!("the core turned the hello away (4400): reconnecting");

@@ -85,8 +85,8 @@ let satellite = Satellite::builder("https://nestor.example.org", manifest, token
 ```
 
 `Camera` is a trait: `V4l2Camera` reads YUYV images from a Linux camera (a webcam, the Raspberry Pi
-camera through its V4L2 driver). A device allowed to film links over TLS (`https://`), unless it
-runs on the core's machine. This SDK reads no QR codes: the camera does not pair.
+camera through its V4L2 driver). Nestor lets a device film only over TLS (`https://`), or on the
+core's machine. This SDK reads no QR codes: the camera does not pair.
 
 A driver that updates itself when a person asks in Nestor gives an `Updater` (where its package
 comes from, how a version is installed) and names its package in the manifest:

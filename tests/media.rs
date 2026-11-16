@@ -106,18 +106,6 @@ async fn without_a_camera_nor_a_call_every_media_intent_is_acknowledged_and_refu
     assert_eq!(light.shown(), Vec::<bool>::new(), "nothing shown");
 }
 
-#[tokio::test]
-async fn a_core_that_closes_the_link_as_insecure_is_retried() {
-    // M7: the core turns away a device that films over plain http; it may be reached over https later.
-    let closes = std::collections::VecDeque::from([4403]).into();
-    let (url, core) = FakeCore { closes, close_after: Duration::from_millis(50), ..Default::default() }.serve().await;
-    let (_dir, tokens) = tokens();
-    let satellite = builder(&url, &tokens).build().unwrap();
-    let observer = satellite.observer();
-    satellite.run_until(wait_for(|| observer.connections() == 2)).await.unwrap();
-    assert_eq!(core.linked(), ["nst1_p0", "nst1_p0"], "the same token: it was not refused");
-}
-
 /// Calls: a microphone and a speaker (feature `voice`).
 #[cfg(feature = "voice")]
 mod calls {
