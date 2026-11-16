@@ -3,7 +3,9 @@
 Rust SDK to write **satellites** for [Nestor](https://nestorhome.dev): devices (a screen and a
 keyboard, a Raspberry Pi speaker, a robot) that pair with a Nestor server, hold one WebSocket link to
 it, carry out its intents, report what they observe and talk with the assistant in writing, aloud or
-both, following the `nestor.satellite/1` protocol. It does not depend on the Nestor server.
+both, following the `nestor.satellite/1` protocol. A device with a camera can be watched, and one with
+a microphone and a speaker called, in sessions a person opens in Nestor. It does not depend on the
+Nestor server.
 
 **Documentation:** [nestorhome.dev/docs/sdks/rust](https://nestorhome.dev/docs/sdks/rust/)
 (features, pairing options, the command, conformance); the API on
@@ -12,12 +14,14 @@ both, following the `nestor.satellite/1` protocol. It does not depend on the Nes
 | Feature | Adds                                                                                    |
 | ------- | --------------------------------------------------------------------------------------- |
 | (none)  | pairing, the link, intents, observations, text (`text.input`, `text.display`)           |
-| `voice` | WebRTC audio (Opus) with your own `AudioSource`/`AudioSink`, the device code said aloud |
+| `voice` | WebRTC audio (Opus) with your own `AudioSource`/`AudioSink`, the device code said aloud, calls |
 | `audio` | `voice` with the machine's microphone and speaker (cpal)                                |
+| `video` | `voice` with a `Camera` filmed in VP8 (pure Rust) and still pictures in JPEG            |
 | `cli`   | the `nestor-satellite` command                                                          |
 
 Capabilities follow what the satellite is given: a text display declares `text.display`,
-`text_input()` declares `text.input`, a microphone `audio.capture`, a speaker `audio.playback`.
+`text_input()` declares `text.input`, a microphone `audio.capture`, a speaker `audio.playback`, a
+camera `video.capture`, a media indicator `media.indicator`.
 
 A screen with a keyboard, no WebRTC:
 
@@ -64,6 +68,26 @@ async fn main() -> nestor_satellite::Result<()> {
 }
 ```
 
+A camera (`--features video`) is filmed only in a session a person opens in Nestor, and a
+microphone with a speaker also takes calls. The SDK keeps the rules itself: it connects only when its
+link asks, for what it was allowed, ends the session when told, at its time limit or when the link
+drops, hangs up the assistant's voice during a call, and never listens on a port.
+
+```rust
+use nestor_satellite::camera::V4l2Camera; // or TestPattern::default() to try
+
+let satellite = Satellite::builder("https://nestor.example.org", manifest, tokens)
+    .camera(V4l2Camera::new("/dev/video0").with_size(1280, 720)) // video.capture
+    .source(Microphone::new()) // a call needs both
+    .sink(Speaker::new())
+    .media_indicator(|active: bool| led.set(active)) // media.indicator: on while filmed or heard
+    .build()?;
+```
+
+`Camera` is a trait: `V4l2Camera` reads YUYV images from a Linux camera (a webcam, the Raspberry Pi
+camera through its V4L2 driver). Nestor lets a device film only over TLS (`https://`), or on the
+core's machine. This SDK reads no QR codes: the camera does not pair.
+
 A driver that updates itself when a person asks in Nestor gives an `Updater` (where its package
 comes from, how a version is installed) and names its package in the manifest:
 `Manifest::new(device, [IDENTIFY])?.with_software(Software::new("my-driver", env!("CARGO_PKG_VERSION"))?)`,
@@ -77,6 +101,7 @@ The command, with nothing to write (a microphone and a speaker, or the terminal)
 cargo install nestor-satellite --features cli
 NESTOR_PAIRING_URI='nestor+http://nestor.local:8471/?code=K7QF2M9X' nestor-satellite run --room salon
 nestor-satellite run --core http://nestor.local:8471 --room bureau --text-only   # lines in, answers out
+nestor-satellite run --core https://nestor.example.org --room entree --camera /dev/video0  # watched, called
 ```
 
 Building needs Rust 1.91+ and a C compiler; the `voice` feature also needs `cmake`, and on Linux

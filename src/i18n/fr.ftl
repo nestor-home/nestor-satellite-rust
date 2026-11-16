@@ -27,3 +27,8 @@ error-other-core = Cette URI d'appairage est celle d'un autre Nestor.
 error-token-refused = Nestor ne connaît plus cet appareil : appairez-le à nouveau.
 error-replaced = Une autre connexion de cet appareil a pris le relais : celle-ci s'arrête.
 error-unreachable = Nestor est injoignable.
+
+link-insecure = Nestor ne laisse pas cet appareil filmer sur une connexion non chiffrée : joignez Nestor en https.
+media-refused = Nestor a demandé une caméra ou un appel que cet appareil n'a pas le droit ou pas les moyens de donner : refusé.
+media-failed = Une session avec Nestor a échoué ({ $error }).
+media-timed-out = La session a atteint sa limite de { $seconds } s : terminée.

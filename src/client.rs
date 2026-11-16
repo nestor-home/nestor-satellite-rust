@@ -2,8 +2,10 @@
 //!
 //! The link is one WebSocket (`/satellites/{device_id}/link`) that carries every message: `hello`
 //! (manifest and token) then `welcome`, intents (acknowledged), observations and typed text. With
-//! the `voice` feature, a device allowed audio also offers WebRTC once welcomed, for audio only. With
-//! an [`Updater`], it reports and installs newer versions of its software ([`crate::update`]).
+//! the `voice` feature, a device allowed audio also offers WebRTC once welcomed, for audio only, when
+//! the core talks (`welcome.voice`). Sessions a person opens to watch or call through the device, and
+//! still pictures, follow the rules of [`crate::sessions`]. With an [`Updater`], it reports and
+//! installs newer versions of its software ([`crate::update`]).
 
 use std::collections::{BTreeSet, HashSet};
 use std::future::{Future, pending};
@@ -20,6 +22,8 @@ use tokio_tungstenite::tungstenite::Message as Frame;
 use tokio_tungstenite::tungstenite::protocol::frame::coding::CloseCode;
 use tracing::{debug, info, warn};
 
+#[cfg(feature = "voice")]
+use crate::audio::{AudioSink, AudioSource, Drain, SilenceSource};
 use crate::body::{Body, NoBody};
 use crate::codes::{Enrollment, EnrollmentCode, base_url};
 use crate::dispatch::{Dispatcher, Outcome};
@@ -27,15 +31,11 @@ use crate::error::{Error, Result};
 use crate::i18n::Language;
 use crate::pairing::{Display, Enroller, Handed, Pairing, Presenter, TokenStore, Voice, code_for};
 use crate::protocol::{self, EnrollmentMethod, Manifest, PairingMethod};
+use crate::sessions::{MediaIndicator, MediaLink, MediaSessions, VoiceHold};
 use crate::text::TextDisplay;
 use crate::update::{GRACE, Restart, Updater, Updates};
 use crate::voice::{Audio, VoiceSetup};
 use crate::wire::{self, Welcome};
-#[cfg(feature = "voice")]
-use crate::{
-    audio::{AudioSink, AudioSource, Drain, SilenceSource},
-    voice::Call,
-};
 
 /// Where an enrollment code handed in is waiting for the pairing in progress.
 type Slot = Arc<StdMutex<Option<mpsc::UnboundedSender<Handed>>>>;
@@ -62,6 +62,7 @@ pub struct Satellite {
     tokens: TokenStore,
     body: Arc<dyn Body>,
     text: Option<Arc<dyn TextDisplay>>,
+    indicator: Option<Arc<dyn MediaIndicator>>,
     presenter: Presenter,
     voice: VoiceSetup,
     /// The device code is said through the sink with the bundled clips.
@@ -102,6 +103,7 @@ impl Satellite {
                 tokens,
                 body: Arc::new(NoBody),
                 text: None,
+                indicator: None,
                 presenter: Presenter { display: None, voice: None, speech: None, language: Language::from_env() },
                 voice: VoiceSetup::default(),
                 speaks: false,
@@ -244,7 +246,6 @@ impl Satellite {
     }
 
     /// One link, until the core closes it, it is lost, or another version of the software is installed.
-    #[cfg_attr(not(feature = "voice"), allow(unused_variables))] // the session offers audio
     async fn link(&self, session: &Session<'_>, token: &str) -> Result<Linked> {
         let device = self.manifest.device().id();
         let url = format!("{}/satellites/{device}/link", ws_url(&self.core));
@@ -262,7 +263,9 @@ impl Satellite {
         }
         let (outbox, mut outgoing) = mpsc::unbounded_channel::<String>();
         let (installed, mut updated) = mpsc::unbounded_channel::<()>();
+        let (refusal, mut refused) = mpsc::unbounded_channel::<()>();
         let mut tasks: JoinSet<Result<()>> = JoinSet::new();
+        let mut media: Option<(Arc<VoiceHold>, MediaSessions)> = None;
         let mut welcomed = false;
         let welcome_deadline = tokio::time::sleep(self.welcome_timeout);
         tokio::pin!(welcome_deadline);
@@ -281,13 +284,26 @@ impl Satellite {
                                 self.update(version, &outbox, &installed, &mut tasks);
                                 Some(reply)
                             }
+                            Outcome::Media { reply, of, media: asked } => {
+                                match &media {
+                                    Some((_, sessions)) => sessions.handle(of, asked),
+                                    None => debug!("a media intent before the welcome: ignored"),
+                                }
+                                Some(reply)
+                            }
                             Outcome::Welcomed(welcome) => {
                                 info!(room = %welcome.room, capabilities = ?welcome.capabilities, "welcomed by the core");
                                 if !welcomed {
                                     welcomed = true;
                                     self.shared.connections.fetch_add(1, Ordering::SeqCst);
-                                    #[cfg(feature = "voice")]
-                                    self.talk(session, token, &welcome, &mut tasks);
+                                    if self.manifest.declares(protocol::VIDEO_CAPTURE)
+                                        && url.starts_with("ws:")
+                                        && !welcome.capabilities.contains(protocol::VIDEO_CAPTURE)
+                                    {
+                                        // M7: over a plain link the core does not let the device film.
+                                        warn!("{}", self.presenter.language.say("link-insecure", &[]));
+                                    }
+                                    media = Some(self.media(session, token, &welcome, &outbox, &refusal));
                                     if let Some(updates) = &self.updates {
                                         updates.welcomed();
                                     }
@@ -314,6 +330,7 @@ impl Satellite {
                 }
                 Some(message) = outgoing.recv() => Some(message),
                 Some(()) = updated.recv() => break End::Updated,
+                Some(()) = refused.recv() => break End::Refused,
                 Some(ended) = tasks.join_next() => {
                     if let Ok(Err(Error::TokenRefused)) = ended {
                         break End::Refused;
@@ -336,6 +353,10 @@ impl Satellite {
             }
         };
 
+        if let Some((voice, sessions)) = &media {
+            voice.end().await;
+            sessions.close().await;
+        }
         tasks.shutdown().await;
         if let End::Updated = end {
             // `select!` may take the end of the install before the statuses it queued (`installing`).
@@ -398,28 +419,42 @@ impl Satellite {
         self.updates.clone().filter(|_| welcome.capabilities.contains(protocol::UPDATE))
     }
 
-    /// Offer audio for this link when the welcome allows some the device declared.
-    #[cfg(feature = "voice")]
-    fn talk(&self, session: &Session<'_>, token: &str, welcome: &Welcome, tasks: &mut JoinSet<Result<()>>) {
+    /// The voice and the media sessions of a link `welcome`d: the voice is offered when the welcome
+    /// allows audio the device declared and the core talks (A1); sessions film when the device has
+    /// a camera allowed `video.capture`, and call when it has a microphone and a speaker allowed both
+    /// (M1).
+    fn media(
+        &self,
+        session: &Session<'_>,
+        token: &str,
+        welcome: &Welcome,
+        outbox: &mpsc::UnboundedSender<String>,
+        refusal: &mpsc::UnboundedSender<()>,
+    ) -> (Arc<VoiceHold>, MediaSessions) {
         let granted = |capability| self.manifest.declares(capability) && welcome.capabilities.contains(capability);
-        if !granted(protocol::AUDIO_CAPTURE) && !granted(protocol::AUDIO_PLAYBACK) {
-            debug!("no audio allowed: none offered");
-            return;
-        }
-        let device = self.manifest.device().id();
-        let call = Call {
+        let link = MediaLink {
             http: session.http.clone(),
-            url: format!("{}/satellites/{device}/audio", self.core),
+            core: self.core.clone(),
             token: token.to_owned(),
-            device_id: device.to_owned(),
-            ice_servers: self.voice.ice_servers.clone(),
-            gathering_timeout: self.voice.gathering_timeout,
-            backoff: Backoff::new(self.backoff.0, self.backoff.1),
+            device_id: self.manifest.device().id().to_owned(),
             body: self.body.clone(),
-            audio: session.audio.clone(),
-            microphone: granted(protocol::AUDIO_CAPTURE),
+            backoff: Backoff::new(self.backoff.0, self.backoff.1),
         };
-        tasks.spawn(call.run());
+        let audio = granted(protocol::AUDIO_CAPTURE) || granted(protocol::AUDIO_PLAYBACK);
+        let hear = if audio && welcome.voice {
+            session.audio.hear(&link, granted(protocol::AUDIO_CAPTURE), refusal.clone())
+        } else {
+            debug!(audio, voice = welcome.voice, "no voice offered");
+            None
+        };
+        let voice = Arc::new(VoiceHold::new(hear));
+        voice.start();
+        let films = granted(protocol::VIDEO_CAPTURE);
+        let calls = granted(protocol::AUDIO_CAPTURE) && granted(protocol::AUDIO_PLAYBACK);
+        let means = session.audio.media(&link, films, calls);
+        let sessions =
+            MediaSessions::new(means, outbox.clone(), voice.clone(), self.indicator.clone(), self.presenter.language);
+        (voice, sessions)
     }
 }
 
@@ -509,6 +544,23 @@ impl SatelliteBuilder {
         self.satellite.voice.source = Some(Box::new(SilenceSource::new()));
         self.satellite.voice.sink = Some(Box::new(Drain));
         self.satellite.voice.audible = false;
+        self
+    }
+
+    /// The camera, filmed only in the sessions a person opens in Nestor and for the still pictures
+    /// they ask for: the satellite declares `video.capture`. With a [`source`](Self::source) and a
+    /// [`sink`](Self::sink), people can also call through the device. A core reached over plain
+    /// `http` accepts a device that films only from its own machine: use `https` otherwise.
+    #[cfg(feature = "video")]
+    pub fn camera(mut self, camera: impl crate::camera::Camera) -> Self {
+        self.satellite.voice.camera = Some(Box::new(camera));
+        self
+    }
+
+    /// Shows when something is filmed or heard in a session, or a picture taken (a light, a screen):
+    /// the satellite declares `media.indicator`.
+    pub fn media_indicator(mut self, indicator: impl MediaIndicator) -> Self {
+        self.satellite.indicator = Some(Arc::new(indicator));
         self
     }
 
@@ -658,10 +710,12 @@ impl SatelliteBuilder {
     }
 
     /// The capabilities the builder declares, and whether it was given what carries each out.
-    fn given(&self) -> [(&'static str, bool); 5] {
+    fn given(&self) -> [(&'static str, bool); 7] {
         let satellite = &self.satellite;
-        let (microphone, speaker) = satellite.voice.given();
+        let (microphone, speaker, camera) = satellite.voice.given();
         [
+            (protocol::VIDEO_CAPTURE, camera),
+            (protocol::MEDIA_INDICATOR, satellite.indicator.is_some()),
             (protocol::UPDATE, self.updater.is_some()),
             (protocol::TEXT_INPUT, self.typed),
             (protocol::TEXT_DISPLAY, satellite.text.is_some()),
@@ -859,6 +913,7 @@ mod tests {
             device_id: "capteur-entree".into(),
             room: "entree".into(),
             capabilities: BTreeSet::from([SPEECH_ACTIVITY.to_owned()]),
+            voice: true,
         });
         assert!(matches!(
             observer.person_detected(1, 0.9),

@@ -82,6 +82,14 @@ pub enum Error {
     #[cfg(feature = "voice")]
     #[error("Opus: {0}")]
     Opus(#[from] opus::Error),
+    /// The camera failed, or does not exist.
+    #[cfg(feature = "video")]
+    #[error(transparent)]
+    Camera(#[from] crate::camera::CameraError),
+    /// An image could not be encoded (VP8, JPEG).
+    #[cfg(feature = "video")]
+    #[error("video: {0}")]
+    Video(String),
     /// Reading or writing the token file failed.
     #[error("I/O: {0}")]
     Io(#[from] std::io::Error),

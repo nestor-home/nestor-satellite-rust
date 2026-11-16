@@ -33,6 +33,9 @@ pub enum Codes {
 /// handed out (`nst1_p…`) and closes the link with 4401 for any other, welcomes the device with
 /// what it declared but `withheld`, sends `script` (`script_after` the welcome), and closes each link with the next code of
 /// `closes` (if any) `close_after` the welcome. Audio offers are noted and answered 503 (401 when `audio_refused`).
+/// The welcome says `voice` when given. Media offers are noted and answered 503 after `media_hold`, as a
+/// core that never connects: the session stays in its offer until then. [`FakeCore::send`] sends on
+/// the current link.
 #[derive(Default)]
 pub struct FakeCore {
     pub pending: usize,
@@ -58,6 +61,14 @@ pub struct FakeCore {
     pub received: Mutex<Vec<Value>>,
     /// The tokens of the audio offers.
     pub offers: Mutex<Vec<String>>,
+    /// What `welcome` says of `voice` (absent when `None`).
+    pub voice: Option<bool>,
+    /// How long a media offer waits for its answer (a 503).
+    pub media_hold: Duration,
+    /// The bodies of the media offers, with their token.
+    pub media_offers: Mutex<Vec<(String, Value)>>,
+    /// Sends on the current link.
+    pub link: Mutex<Option<tokio::sync::mpsc::UnboundedSender<Value>>>,
 }
 
 impl FakeCore {
@@ -69,6 +80,7 @@ impl FakeCore {
             .route("/satellites/pairings/{id}/enrollment", post(enroll))
             .route("/satellites/{device}/link", any(link))
             .route("/satellites/{device}/audio", post(offer))
+            .route("/satellites/{device}/media", post(media_offer))
             .with_state(core.clone());
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let url = format!("http://{}", listener.local_addr().unwrap());
@@ -103,6 +115,15 @@ impl FakeCore {
 
     pub fn offers(&self) -> Vec<String> {
         self.offers.lock().unwrap().clone()
+    }
+
+    pub fn media_offers(&self) -> Vec<(String, Value)> {
+        self.media_offers.lock().unwrap().clone()
+    }
+
+    /// Send `message` on the current link.
+    pub fn send(&self, message: Value) {
+        self.link.lock().unwrap().as_ref().unwrap().send(message).unwrap();
     }
 
     fn approve(&self, id: &str) {
@@ -186,6 +207,15 @@ async fn offer(State(core): State<Arc<FakeCore>>, headers: HeaderMap, Json(body)
     if core.audio_refused { StatusCode::UNAUTHORIZED } else { StatusCode::SERVICE_UNAVAILABLE }
 }
 
+async fn media_offer(State(core): State<Arc<FakeCore>>, headers: HeaderMap, Json(body): Json<Value>) -> StatusCode {
+    assert_eq!(body["type"], "offer");
+    assert!(!body["sdp"].as_str().unwrap().contains("m=application"), "no data channel");
+    let token = headers["authorization"].to_str().unwrap().trim_start_matches("Bearer ").to_owned();
+    core.media_offers.lock().unwrap().push((token, body));
+    tokio::time::sleep(core.media_hold).await;
+    StatusCode::SERVICE_UNAVAILABLE
+}
+
 async fn link(State(core): State<Arc<FakeCore>>, upgrade: WebSocketUpgrade) -> Response {
     upgrade.on_upgrade(move |socket| linked(core, socket))
 }
@@ -223,8 +253,13 @@ async fn linked(core: Arc<FakeCore>, mut socket: WebSocket) {
         .map(|c| c["name"].as_str().unwrap())
         .filter(|name| !core.withheld.contains(name))
         .collect();
-    let welcome = json!({"device_id": manifest["device"]["id"], "room": "salon", "capabilities": allowed});
+    let mut welcome = json!({"device_id": manifest["device"]["id"], "room": "salon", "capabilities": allowed});
+    if let Some(voice) = core.voice {
+        welcome["voice"] = voice.into();
+    }
     send(&mut socket, &envelope("welcome", "w-1", welcome)).await;
+    let (sender, mut sent) = tokio::sync::mpsc::unbounded_channel();
+    *core.link.lock().unwrap() = Some(sender);
     tokio::time::sleep(core.script_after).await;
     for message in &core.script {
         send(&mut socket, message).await;
@@ -239,6 +274,7 @@ async fn linked(core: Arc<FakeCore>, mut socket: WebSocket) {
                 Some(Ok(Message::Close(_)) | Err(_)) | None => return,
                 Some(Ok(_)) => {}
             },
+            Some(message) = sent.recv() => send(&mut socket, &message).await,
             () = &mut deadline, if closing.is_some() => {
                 close(&mut socket, closing.unwrap_or_default()).await;
                 return;

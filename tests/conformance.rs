@@ -1,8 +1,8 @@
 //! The `nestor-satellite` binary against the Nestor server's black-box conformance suite: the
 //! published server's `nestor satellites conformance`, run through `uvx`, at the version pinned in
 //! `.nestor-version` (or from `NESTOR_CONFORMANCE_FROM`, a `uvx --from` source such as
-//! `'../nestor[voice]'`, to test against a local server). Once as a robot-less speaker, once as a
-//! text satellite in a terminal.
+//! `'../nestor[voice,media]'`, to test against a local server). As a robot-less speaker, as a camera
+//! that also takes calls, and as a text satellite in a terminal.
 //!
 //! Skipped when `uvx` is not on the PATH, unless `NESTOR_CONFORMANCE=required` (CI).
 #![cfg(feature = "cli")]
@@ -25,7 +25,7 @@ fn conformance(options: &[&str]) -> Option<String> {
         return None;
     };
     let server = std::env::var("NESTOR_CONFORMANCE_FROM")
-        .unwrap_or_else(|_| format!("nestor-home[voice]=={}", SERVER_VERSION.trim()));
+        .unwrap_or_else(|_| format!("nestor-home[voice,media]=={}", SERVER_VERSION.trim()));
     let output = Command::new("uvx")
         .args(["--from", &server, "nestor", "satellites", "conformance", "--deadline", "15", "--"])
         .args([binary, "run", "--core", "{url}", "--room", "salon", "--id", "enceinte-salon"])
@@ -61,6 +61,28 @@ fn the_binary_passes_the_servers_conformance_suite_as_a_speaker() {
         "PASS  receives the core's audio (A1, A2)",
         "PASS  sends its microphone audio (A1, A2)",
         "PASS  offers no audio when audio is not allowed (A1)",
+        "PASS  opens no media connection unless asked (M1)",
+        "PASS  sends its microphone in a call (M1)",
+        "PASS  ends the session when told (M2)",
+    ] {
+        assert!(report.lines().any(|line| line == check), "{check}: not run\n{report}");
+    }
+    assert!(!report.contains("video"), "it films nothing: {report}");
+}
+
+#[test]
+fn the_binary_passes_the_servers_conformance_suite_as_a_camera_that_takes_calls() {
+    let Some(report) = conformance(&["--null-audio", "--camera", "test-pattern"]) else {
+        return;
+    };
+    for check in [
+        "PASS  opens no media connection unless asked (M1)",
+        "PASS  opens a media connection when asked, with what was asked (M1)",
+        "PASS  sends its camera's video in the session (M1)",
+        "PASS  sends its microphone in a call (M1)",
+        "PASS  ends the session when told (M2)",
+        "PASS  ends the session by itself after 3 s (M2)",
+        "PASS  sends a still picture when asked",
     ] {
         assert!(report.lines().any(|line| line == check), "{check}: not run\n{report}");
     }

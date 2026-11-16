@@ -5,6 +5,10 @@
 //!     NESTOR_PAIRING_URI=nestor+http://nestor.local:8471/?code=K7QF2M9X nestor-satellite run --room salon
 //!     nestor-satellite run --core http://nestor.local:8471 --room bureau --text-only
 //!
+//! With `--camera` (a V4L2 device such as /dev/video0 on Linux, or `test-pattern`), the people allowed
+//! to can also watch through it from Nestor, and with the microphone and speaker call through it.
+//! This SDK reads no QR codes: the camera does not pair.
+//!
 //! Useful on a Raspberry Pi with a USB speakerphone. The first run pairs with the enrollment code
 //! it is given (`--pairing-uri`, `--pairing-code`, or their environment variables), else says a
 //! device code through the speaker and logs it, to type in Nestor; the token (and the enrollment
@@ -14,6 +18,7 @@ use std::path::PathBuf;
 use std::process::ExitCode;
 
 use clap::{Parser, Subcommand};
+use nestor_satellite::camera::{Camera, TestPattern};
 use nestor_satellite::devices::{Microphone, Speaker, device_names};
 use nestor_satellite::{
     Device, Enrollment, EnrollmentCode, Error, IDENTIFY, Language, Manifest, Observer, PairingUri, Satellite,
@@ -86,6 +91,10 @@ struct Run {
     /// No sound card: send silence and drop the core's voice (conformance runs, CI).
     #[arg(long)]
     null_audio: bool,
+    /// Film with this camera when a person opens a session in Nestor, and take the still pictures
+    /// asked: a V4L2 device (/dev/video0, Linux) or `test-pattern` (colour bars).
+    #[arg(long, conflicts_with = "text_only")]
+    camera: Option<String>,
     /// Log more, down to each step of the link (`RUST_LOG` takes precedence).
     #[arg(short, long)]
     verbose: bool,
@@ -170,7 +179,25 @@ fn satellite(run: Run, language: Language) -> Result<Satellite, String> {
             builder.source(microphone).sink(speaker)
         };
     }
+    if let Some(camera) = run.camera {
+        builder = builder.camera(camera_named(&camera)?);
+    }
     builder.build().map_err(|error: Error| language.describe(&error))
+}
+
+/// The camera `name` designates: `test-pattern`, or a V4L2 device on Linux.
+fn camera_named(name: &str) -> Result<Box<dyn Camera>, String> {
+    if name == "test-pattern" {
+        return Ok(Box::new(TestPattern::default()));
+    }
+    #[cfg(target_os = "linux")]
+    {
+        Ok(Box::new(nestor_satellite::camera::V4l2Camera::new(name)))
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        Err(format!("{name}: cameras are read through V4L2, on Linux; elsewhere only test-pattern"))
+    }
 }
 
 /// Each line typed on stdin, sent as typed text; the satellite goes on after the end of stdin.

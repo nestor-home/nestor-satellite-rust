@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://nestorhome.dev/schemas/satellite/1/welcome.json",
-  "title": "Answer to `hello`: where the device is and what it was allowed to do.",
+  "title": "Answer to `hello`: where the device is and what it was allowed to do; `voice`: the core talks with it, so a",
   "x-protocol": "nestor.satellite/1",
   "x-direction": "to_satellite",
   "type": "object",
@@ -32,6 +32,9 @@
           "items": {
             "type": "string"
           }
+        },
+        "voice": {
+          "type": "boolean"
         }
       },
       "required": [

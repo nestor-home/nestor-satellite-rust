@@ -76,6 +76,9 @@ fn the_sdk_knows_every_value_the_core_may_send() {
             wire::INTENT_BEHAVIOR,
             wire::INTENT_EXPRESSION,
             wire::INTENT_IDENTIFY,
+            wire::INTENT_MEDIA_CLOSE,
+            wire::INTENT_MEDIA_OPEN,
+            wire::INTENT_MEDIA_SNAPSHOT,
             wire::INTENT_TEXT,
             wire::INTENT_UPDATE,
             wire::WELCOME
@@ -88,7 +91,7 @@ fn every_pairing_method_but_the_qr_code_can_be_declared_and_the_qr_code_never() 
     let schemas = vendored();
     let protocol = &schemas["manifest.json"]["properties"]["pairing_methods"]["items"]["enum"];
     let mut declarable: Vec<&str> = PairingMethod::ALL.iter().map(|m| m.as_str()).collect();
-    declarable.insert(4, "enrollment.qr"); // needs a camera: this SDK drives none
+    declarable.insert(4, "enrollment.qr"); // this SDK reads no QR codes, even with a camera
     assert_eq!(protocol, &json!(declarable), "the SDK follows the protocol's methods");
     let qr = json!("enrollment.qr");
     assert!(serde_json::from_value::<PairingMethod>(qr.clone()).is_err(), "not a method of this SDK");
@@ -118,6 +121,8 @@ fn what_the_sdk_sends_follows_the_schemas() {
         wire::update_status(wire::UpdateState::Available, Some("0.6.0")).unwrap(),
         wire::update_status(wire::UpdateState::Installing, Some("0.6.0")).unwrap(),
         wire::update_status(wire::UpdateState::Failed, Some("0.6.0")).unwrap(),
+        wire::snapshot("intent-1", &[0xff, 0xd8, 0xff, 0xd9]).unwrap(),
+        wire::snapshot("intent-1", &[0xff, 0xd8, 0xff]).unwrap(),
     ];
     for message in sent {
         let name = format!("{}.json", message["type"].as_str().unwrap());
@@ -142,6 +147,12 @@ fn from_core() -> Vec<Value> {
         json!({"type": "intent.text", "id": "m-7", "at": at, "payload": {"text": "Je regarde.", "final": false}}),
         json!({"type": "intent.text", "id": "m-8", "at": at, "payload": {"text": "Il fait 21 °C."}}),
         json!({"type": "intent.update", "id": "m-9", "at": at, "payload": {"version": "0.6.0"}}),
+        json!({"type": "welcome", "id": "m-10", "at": at,
+               "payload": {"device_id": "camera-entree", "room": "entree", "capabilities": [], "voice": false}}),
+        json!({"type": "intent.media.open", "id": "m-11", "at": at,
+               "payload": {"session": "s-1", "video": true, "audio": true, "max_s": 3600}}),
+        json!({"type": "intent.media.close", "id": "m-12", "at": at, "payload": {"session": "s-1"}}),
+        json!({"type": "intent.media.snapshot", "id": "m-13", "at": at, "payload": {}}),
     ]
 }
 
