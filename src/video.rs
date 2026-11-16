@@ -128,11 +128,8 @@ pub(crate) fn jpeg(image: &Frame) -> Result<Vec<u8>> {
     let encoded = match image.format() {
         PixelFormat::Rgb => encoder.encode(image.pixels(), width, height, jpeg_encoder::ColorType::Rgb),
         PixelFormat::Yuyv => {
-            let ycbcr: Vec<u8> = image
-                .pixels()
-                .chunks_exact(4)
-                .flat_map(|pair| [pair[0], pair[1], pair[3], pair[2], pair[1], pair[3]])
-                .collect();
+            let ycbcr: Vec<u8> =
+                image.pixels().as_chunks::<4>().0.iter().flat_map(|&[y0, u, y1, v]| [y0, u, v, y1, u, v]).collect();
             encoder.encode(&ycbcr, width, height, jpeg_encoder::ColorType::Ycbcr)
         }
     };
