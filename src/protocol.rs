@@ -37,6 +37,13 @@ pub const IDENTIFY: &str = "device.identify";
 /// and reports where it stands (`update.status`). Declared when the driver gives an
 /// [`Updater`](crate::Updater).
 pub const UPDATE: &str = "device.update";
+/// The device films, only in a session a person opened (`intent.media.open`), and takes still
+/// pictures when asked (`intent.media.snapshot`). Declared when the driver gives a
+/// [`Camera`](crate::camera::Camera) (feature `video`).
+pub const VIDEO_CAPTURE: &str = "video.capture";
+/// The device shows that a session is open (a light, a screen). Declared when the driver gives a
+/// [`MediaIndicator`](crate::MediaIndicator).
+pub const MEDIA_INDICATOR: &str = "media.indicator";
 
 /// At most this many capabilities in a manifest.
 pub const MAX_CAPABILITIES: usize = 32;
@@ -149,8 +156,8 @@ pub enum PairingMethod {
 
 impl PairingMethod {
     /// Every method this SDK can declare, in the schema's order. The protocol's `enrollment.qr`
-    /// (scanning the pairing URI's QR code) needs a camera, which this SDK does not drive: it is
-    /// not one of them.
+    /// (scanning the pairing URI's QR code) is not one of them: this SDK films with a camera, but
+    /// reads no QR codes.
     pub const ALL: [Self; 4] =
         [Self::DeviceCodeDisplay, Self::DeviceCodeSpeech, Self::EnrollmentInput, Self::EnrollmentProvisioning];
 
@@ -172,7 +179,7 @@ impl fmt::Display for PairingMethod {
 }
 
 /// How the device received an enrollment code: the pairing methods whose proof is an enrollment code
-/// that this SDK carries out (not `enrollment.qr`: it drives no camera).
+/// that this SDK carries out (not `enrollment.qr`: it reads no QR codes).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 pub enum EnrollmentMethod {
     /// Typed on the device.

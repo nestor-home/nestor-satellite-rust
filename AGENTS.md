@@ -19,8 +19,9 @@ be fixed goes in `.cargo/audit.toml` with its reason). Building needs a C compil
 headers for the `audio` feature (`libasound2-dev pkg-config`).
 
 Features: none by default (pairing, the WebSocket link, intents, observations, text); `voice` adds
-WebRTC audio (`webrtc`, `rtc`, `opus`) and the bundled voice; `audio` adds cpal devices on top of
-`voice`; `cli` is the command, on top of `audio`. Nothing of `voice` may leak into the default build. Add dependencies with `cargo add`,
+WebRTC audio (`webrtc`, `rtc`, `opus`), the bundled voice and calls; `audio` adds cpal devices on top of
+`voice`; `video` adds the camera on top of `voice` (OpenH264 built from source, `jpeg-encoder`,
+`linuxvideo` on Linux); `cli` is the command, on top of `audio` and `video`. Nothing of `voice` may leak into the default build. Add dependencies with `cargo add`,
 pin them to a full version, and commit `Cargo.lock`.
 
 ## Layout
@@ -39,6 +40,10 @@ src/
 ├── body.rs       Body: what a driver implements to carry out intents (no-op defaults)
 ├── text.rs       TextDisplay: where the assistant's words are shown (text.display)
 ├── update.rs     Updater: the driver's own software, reported and installed on request (device.update)
+├── sessions.rs   MediaSessions: rules M1-M3, M5, M6 of media sessions (every build), VoiceHold, MediaIndicator
+├── session.rs    the WebRTC connection of one session: H.264 video, a call both ways (feature `voice`)
+├── camera.rs     Camera trait, Frame, TestPattern, V4l2Camera on Linux (feature `video`)
+├── video.rs      CameraFeed (on only while used), H.264 and JPEG encoding (feature `video`)
 ├── voice.rs      WebRTC audio offered once welcomed, offered again while the link is up (feature `voice`)
 ├── voiceless.rs  `voice` without the feature: nothing to open, no device code said (keeps `cfg` out of the
 │                 link and pairing)
@@ -59,7 +64,7 @@ tests/            schemas, fake-core client tests (support/: the fake core, HTTP
    is only used by the conformance test, as the published `nestor-home` package (`.nestor-version`).
 2. **Refreshing the schemas.** `schemas/` is a copy of the schemas of the `nestor-home` release in
    `.nestor-version`. The standard itself is https://nestorhome.dev/docs/satellites/protocol/ (rules N1,
-   P1-P8, I1-I3, L1-L5, T1-T4, U1-U3, A1-A4). To refresh:
+   P1-P8, I1-I3, L1-L5, T1-T4, U1-U3, A1-A4, M1-M7). To refresh:
    `uvx --from nestor-home=="$(cat .nestor-version)" nestor satellites schemas --out schemas/`, then adapt
    `protocol.rs`/`wire.rs` until `cargo test` passes. Every message the SDK sends is validated
    against these schemas, and the decoder must refuse what they refuse.
@@ -72,8 +77,8 @@ tests/            schemas, fake-core client tests (support/: the fake core, HTTP
    either (`EnrollmentCode`'s `Debug` hides it); the device code is, always: it is how a headless
    device is paired.
 6. **One link, audio apart.** Every message goes over the WebSocket link, never over WebRTC (no data
-   channel). Audio is offered only when `welcome` allows `audio.capture` or `audio.playback`, lives
-   with the link, and pairing and the link never wait for it. 4409 (replaced) stops the satellite;
+   channel). The voice is offered only when `welcome` allows `audio.capture` or `audio.playback` and
+   says `voice` (A1), lives with the link, and pairing and the link never wait for it. 4409 (replaced) stops the satellite;
    1001, 4400 and a silent link (60 s) reconnect. The core is aiortc (Pipecat SmallWebRTC): keep
    the conformance run green.
 7. **Pairing never fails silently.** Every refusal is logged; a refused enrollment code is never
@@ -94,39 +99,48 @@ tests/            schemas, fake-core client tests (support/: the fake core, HTTP
    however it ends.
 10. **Refused enrollment codes outlive the process.** The `TokenStore` file keeps their SHA-256
    (`refused`), even when the token is forgotten; a code is never written or logged in clear.
-11. **No QR code.** This SDK drives no camera: `enrollment.qr` is not a `PairingMethod` here, so no
-   path declares it.
+11. **No QR code.** This SDK films with a camera but reads no QR codes: `enrollment.qr` is not a
+   `PairingMethod` here, so no path declares it.
 12. **Capabilities follow what is given.** `text.display` from a `TextDisplay`, `text.input` from
    `text_input()`, `audio.capture` from a source, `audio.playback` from a sink, `device.update` from
-   an `Updater`. A manifest declaring one of them without it is refused (`Error::NotProvided`).
+   an `Updater`, `video.capture` from a `Camera`, `media.indicator` from a `MediaIndicator`. A manifest declaring one of them without it is refused (`Error::NotProvided`).
 13. **The core never chooses what is installed.** An `Updater` asks the software's own source; the
    satellite installs only the newer version it found and reported, never one the core names, never
    an older one. A new version not welcomed within the grace period (60 s) reinstalls the one that ran
    before. The crate ships no updater: a driver gives one for the way its software is installed.
+14. **Media sessions keep M1 to M7 in the SDK** (`sessions.rs`), whatever the driver does: a
+   connection only for an `intent.media.open` of the link and what was given and `welcome` allowed
+   (anything more is acknowledged, logged and refused whole), one call at a time, an end at `close`,
+   `max_s` (its own clock) and when the link closes, the indicator on before the offer and off once
+   nothing is sent, the voice hung up during a call and offered again after, a still picture as
+   `media.snapshot` of the intent, no listening port (a test scans `src/`), a 4403 close retried.
+   The camera is on only while a session or a picture uses it.
 
 ## Conformance
 
 The server's black-box suite (`nestor satellites conformance`, in the published `nestor-home`
-package) runs a fake core and launches the binary once per scenario, twice over: as a robot-less
-speaker (`audio.capture` + `audio.playback` + `device.identify`, `--null-audio`) and as a text
-satellite (`text.input` + `text.display` + `device.identify`, `--text-only`). `{url}` is the core,
+package) runs a fake core and launches the binary once per scenario, three times over: as a
+robot-less speaker (`audio.capture` + `audio.playback` + `device.identify`, `--null-audio`), as a
+camera that takes calls (the same with `--camera test-pattern`) and as a text satellite
+(`text.input` + `text.display` + `device.identify`, `--text-only`). `{url}` is the core,
 `{state}` a fresh folder for the token, and the enrollment code comes in `NESTOR_PAIRING_URI`. It
 checks pairing with a device code and with an enrollment code, refused codes, Retry-After,
 identify, the link and its hello, acks, text, audio both ways, no audio when not allowed,
-reconnection and a refused token:
+media sessions (none unasked, video and a call when asked, the end when told and at `max_s`, a still
+picture), reconnection and a refused token:
 
 ```bash
 cargo test --all-features --test conformance -- --nocapture --test-threads=1
 # or by hand:
 cargo build --features cli
-uvx --from "nestor-home[voice]==$(cat .nestor-version)" nestor satellites conformance --deadline 15 -- \
+uvx --from "nestor-home[voice,media]==$(cat .nestor-version)" nestor satellites conformance --deadline 15 -- \
   target/debug/nestor-satellite run --core {url} --room salon --id enceinte-salon --model conformance \
   --token-file {state}/token.json --null-audio --verbose
 ```
 
 The server's version is pinned in `.nestor-version`, the one place to bump it (deliberately, after
 reading the server's changelog). Against a local checkout of the server, set
-`NESTOR_CONFORMANCE_FROM='../nestor[voice]'` (or replace the `--from` argument by hand). The test checks the exit status (0), that no line starts with
+`NESTOR_CONFORMANCE_FROM='../nestor[voice,media]'` (or replace the `--from` argument by hand). The test checks the exit status (0), that no line starts with
 `FAIL`, and a few named checks; it is skipped when `uvx` is not on the PATH, and
 `NESTOR_CONFORMANCE=required` (CI) makes that a failure.
 
@@ -147,4 +161,5 @@ reading the server's changelog). Against a local checkout of the server, set
 - Hardware is replaced by doubles (`SilenceSource`, `RecordingSink`, a display/voice/body that
   notes what it is asked); the core by an axum fake (`tests/client.rs`, `tests/schemas.rs`) or the
   server's own suite (`tests/conformance.rs`).
-- A real microphone, speaker or Raspberry Pi is not exercised by the tests: say so when it matters.
+- A real microphone, speaker, camera or Raspberry Pi is not exercised by the tests: say so when it
+  matters. `V4l2Camera` is only type-checked for Linux.

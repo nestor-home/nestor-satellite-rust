@@ -3,17 +3,20 @@
 
 use std::sync::Arc;
 
+use tokio::sync::mpsc;
+
 use crate::error::Result;
 use crate::i18n::Language;
+use crate::sessions::{Hear, Means, MediaLink};
 
 /// Nothing to talk aloud with.
 #[derive(Default)]
 pub(crate) struct VoiceSetup {}
 
 impl VoiceSetup {
-    /// No microphone, no speaker.
-    pub(crate) fn given(&self) -> (bool, bool) {
-        (false, false)
+    /// No microphone, no speaker, no camera.
+    pub(crate) fn given(&self) -> (bool, bool, bool) {
+        (false, false, false)
     }
 
     /// No speaker to say the device code through.
@@ -32,6 +35,21 @@ pub(crate) struct Audio;
 impl Audio {
     pub(crate) fn spoken_code(&self, _language: Language) -> Option<Arc<SpokenCode>> {
         None
+    }
+
+    /// No voice.
+    pub(crate) fn hear(
+        &self,
+        _link: &MediaLink,
+        _microphone: bool,
+        _refused: mpsc::UnboundedSender<()>,
+    ) -> Option<Hear> {
+        None
+    }
+
+    /// Nothing to film or call with.
+    pub(crate) fn media(&self, _link: &MediaLink, _films: bool, _calls: bool) -> Means {
+        Means { films: false, calls: false, connect: None, still: None }
     }
 
     pub(crate) async fn close(&self) {}

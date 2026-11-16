@@ -11,6 +11,7 @@ use std::time::{Duration, Instant};
 
 use async_trait::async_trait;
 use reqwest::{Client, StatusCode};
+use rtc::rtp_transceiver::rtp_sender::{RTCRtpCodec, RTCRtpCodingParameters, RTCRtpEncodingParameters, RtpCodecKind};
 use serde::Deserialize;
 use serde_json::json;
 use tokio::sync::{Mutex, Notify, mpsc, watch};
@@ -34,9 +35,10 @@ use crate::error::{Error, Result};
 use crate::i18n::Language;
 use crate::media;
 use crate::pairing::success;
+use crate::sessions::{Hear, Means, MediaLink};
 pub(crate) use crate::speech::SpokenCode;
 
-/// What the driver gave to talk aloud with, before the satellite runs.
+/// What the driver gave to talk aloud and film with, before the satellite runs.
 pub(crate) struct VoiceSetup {
     /// The microphone: the satellite declares `audio.capture`.
     pub(crate) source: Option<Box<dyn AudioSource>>,
@@ -44,6 +46,9 @@ pub(crate) struct VoiceSetup {
     pub(crate) sink: Option<Box<dyn AudioSink>>,
     /// The sink is a real speaker the device code can be said through.
     pub(crate) audible: bool,
+    /// The camera: the satellite declares `video.capture`.
+    #[cfg(feature = "video")]
+    pub(crate) camera: Option<Box<dyn crate::camera::Camera>>,
     pub(crate) ice_servers: Vec<String>,
     pub(crate) gathering_timeout: Duration,
 }
@@ -54,6 +59,8 @@ impl Default for VoiceSetup {
             source: None,
             sink: None,
             audible: false,
+            #[cfg(feature = "video")]
+            camera: None,
             ice_servers: Vec::new(),
             gathering_timeout: Duration::from_secs(5),
         }
@@ -61,9 +68,13 @@ impl Default for VoiceSetup {
 }
 
 impl VoiceSetup {
-    /// What it was given: a microphone, a speaker.
-    pub(crate) fn given(&self) -> (bool, bool) {
-        (self.source.is_some(), self.sink.is_some())
+    /// What it was given: a microphone, a speaker, a camera.
+    pub(crate) fn given(&self) -> (bool, bool, bool) {
+        #[cfg(feature = "video")]
+        let camera = self.camera.is_some();
+        #[cfg(not(feature = "video"))]
+        let camera = false;
+        (self.source.is_some(), self.sink.is_some(), camera)
     }
 
     /// Whether the sink is a real speaker the device code can be said through.
@@ -71,7 +82,8 @@ impl VoiceSetup {
         self.audible
     }
 
-    /// Open the devices given, for the whole run.
+    /// Open the audio devices given, for the whole run; the camera opens only when a session or a
+    /// picture needs it.
     pub(crate) async fn open(&mut self) -> Result<Audio> {
         let mut source = self.source.take().unwrap_or_else(|| Box::new(SilenceSource::new()));
         let mut sink = self.sink.take().unwrap_or_else(|| Box::new(Drain));
@@ -80,15 +92,26 @@ impl VoiceSetup {
             source.close().await;
             return Err(error.into());
         }
-        Ok(Audio { source: Arc::new(Mutex::new(source)), sink: Arc::new(Mutex::new(sink)) })
+        Ok(Audio {
+            source: Arc::new(Mutex::new(source)),
+            sink: Arc::new(Mutex::new(sink)),
+            #[cfg(feature = "video")]
+            camera: self.camera.take().map(|camera| Arc::new(crate::video::CameraFeed::new(camera))),
+            ice_servers: self.ice_servers.clone(),
+            gathering_timeout: self.gathering_timeout,
+        })
     }
 }
 
-/// The audio devices, open while the satellite runs.
+/// The audio devices, open while the satellite runs, and the camera.
 #[derive(Clone)]
 pub(crate) struct Audio {
     pub(crate) source: Arc<Mutex<Box<dyn AudioSource>>>,
     pub(crate) sink: Arc<Mutex<Box<dyn AudioSink>>>,
+    #[cfg(feature = "video")]
+    pub(crate) camera: Option<Arc<crate::video::CameraFeed>>,
+    pub(crate) ice_servers: Vec<String>,
+    pub(crate) gathering_timeout: Duration,
 }
 
 impl Audio {
@@ -97,15 +120,51 @@ impl Audio {
         Some(Arc::new(SpokenCode::new(self.sink.clone(), language)))
     }
 
+    /// The voice of `link` with the assistant, sending the `microphone` or silence; a refused token
+    /// is told on `refused`.
+    pub(crate) fn hear(&self, link: &MediaLink, microphone: bool, refused: mpsc::UnboundedSender<()>) -> Option<Hear> {
+        let call = Call {
+            http: link.http.clone(),
+            url: format!("{}/satellites/{}/audio", link.core, link.device_id),
+            token: link.token.clone(),
+            device_id: link.device_id.clone(),
+            ice_servers: self.ice_servers.clone(),
+            gathering_timeout: self.gathering_timeout,
+            backoff: link.backoff.clone(),
+            body: link.body.clone(),
+            audio: self.clone(),
+            microphone,
+        };
+        Some(Arc::new(move || {
+            let (call, refused) = (call.clone(), refused.clone());
+            Box::pin(async move {
+                if let Err(Error::TokenRefused) = call.run().await {
+                    let _ = refused.send(());
+                }
+            })
+        }))
+    }
+
+    /// What the sessions of `link` film and call with: the camera when it `films`, the microphone
+    /// and the speaker when it `calls`.
+    pub(crate) fn media(&self, link: &MediaLink, films: bool, calls: bool) -> Means {
+        crate::session::means(self, link, films, calls)
+    }
+
     /// Release the devices.
     pub(crate) async fn close(&self) {
         self.source.lock().await.close().await;
         self.sink.lock().await.close().await;
+        #[cfg(feature = "video")]
+        if let Some(camera) = &self.camera {
+            camera.shut().await;
+        }
     }
 }
 
 /// The audio of one link: offered, and offered again when it fails, until the link ends (the task is
 /// aborted then) or the core refuses the token.
+#[derive(Clone)]
 pub(crate) struct Call {
     pub(crate) http: Client,
     /// `…/satellites/{device_id}/audio`.
@@ -155,22 +214,7 @@ impl Call {
     async fn peer(&self, events: Arc<Events>) -> Result<Arc<dyn PeerConnection>> {
         let mut media = MediaEngine::default();
         media.register_default_codecs()?;
-        let registry = register_default_interceptors(Registry::new(), &mut media)?;
-        let ice_servers = if self.ice_servers.is_empty() {
-            Vec::new()
-        } else {
-            vec![RTCIceServer { urls: self.ice_servers.clone(), ..Default::default() }]
-        };
-        let config = RTCConfigurationBuilder::new().with_ice_servers(ice_servers).build();
-        let peer = PeerConnectionBuilder::new()
-            .with_configuration(config)
-            .with_media_engine(media)
-            .with_interceptor_registry(registry)
-            .with_handler(events)
-            .with_udp_addrs(vec!["0.0.0.0:0".to_owned()])
-            .build()
-            .await?;
-        Ok(Arc::new(peer))
+        peer(media, &self.ice_servers, events).await
     }
 
     async fn converse(
@@ -179,33 +223,12 @@ impl Call {
         signals: &mut Signals,
         tasks: &mut JoinSet<()>,
     ) -> Result<bool> {
-        let track = Arc::new(TrackLocalStaticSample::new(
-            Instant::now(),
-            MediaStreamTrack::new(
-                format!("nestor-{}", self.device_id),
-                "microphone".to_owned(),
-                "microphone".to_owned(),
-                rtc::rtp_transceiver::rtp_sender::RtpCodecKind::Audio,
-                vec![rtc::rtp_transceiver::rtp_sender::RTCRtpEncodingParameters {
-                    rtp_coding_parameters: rtc::rtp_transceiver::rtp_sender::RTCRtpCodingParameters {
-                        ssrc: Some(rand_ssrc()),
-                        ..Default::default()
-                    },
-                    codec: opus_codec(),
-                    ..Default::default()
-                }],
-            ),
-        )?);
+        let track = local_track(&self.device_id, "microphone", RtpCodecKind::Audio, opus_codec())?;
         let sender = peer.add_track(track.clone() as Arc<dyn TrackLocal>).await?;
 
-        let offer = peer.create_offer(None).await?;
-        peer.set_local_description(offer).await?;
-        if tokio::time::timeout(self.gathering_timeout, signals.gathered.notified()).await.is_err() {
-            warn!("ICE gathering still running: offering the candidates found so far");
-        }
-        let local = peer.local_description().await.ok_or(Error::Link("no local description"))?;
-        trace!(sdp = %local.sdp, "offer");
-        let answer = self.offer(&local.sdp).await?;
+        let local = gathered(peer, signals, self.gathering_timeout).await?;
+        trace!(sdp = %local, "offer");
+        let answer = self.offer(&local).await?;
         trace!(sdp = %answer.sdp, "answer");
         peer.set_remote_description(RTCSessionDescription::answer(answer.sdp)?).await?;
 
@@ -261,25 +284,77 @@ impl Call {
 }
 
 #[derive(Deserialize)]
-struct Answer {
-    sdp: String,
+pub(crate) struct Answer {
+    pub(crate) sdp: String,
 }
 
-struct Signals {
-    gathered: Arc<Notify>,
-    state: watch::Receiver<RTCPeerConnectionState>,
-    tracks: mpsc::UnboundedReceiver<Arc<dyn TrackRemote>>,
+/// A peer connection with `media`'s codecs, its ICE candidates gathered on this machine's interfaces
+/// (and through `ice_servers`): it only connects out, it listens for nobody (M4).
+pub(crate) async fn peer(
+    mut media: MediaEngine,
+    ice_servers: &[String],
+    events: Arc<Events>,
+) -> Result<Arc<dyn PeerConnection>> {
+    let registry = register_default_interceptors(Registry::new(), &mut media)?;
+    let ice_servers = if ice_servers.is_empty() {
+        Vec::new()
+    } else {
+        vec![RTCIceServer { urls: ice_servers.to_vec(), ..Default::default() }]
+    };
+    let config = RTCConfigurationBuilder::new().with_ice_servers(ice_servers).build();
+    let peer = PeerConnectionBuilder::new()
+        .with_configuration(config)
+        .with_media_engine(media)
+        .with_interceptor_registry(registry)
+        .with_handler(events)
+        .with_udp_addrs(vec!["0.0.0.0:0".to_owned()])
+        .build()
+        .await?;
+    Ok(Arc::new(peer))
+}
+
+/// An offer for `peer`, once its ICE gathering is complete (no trickle): its SDP.
+pub(crate) async fn gathered(peer: &Arc<dyn PeerConnection>, signals: &Signals, timeout: Duration) -> Result<String> {
+    let offer = peer.create_offer(None).await?;
+    peer.set_local_description(offer).await?;
+    if tokio::time::timeout(timeout, signals.gathered.notified()).await.is_err() {
+        warn!("ICE gathering still running: offering the candidates found so far");
+    }
+    Ok(peer.local_description().await.ok_or(Error::Link("no local description"))?.sdp)
+}
+
+/// A track the device sends, of `kind` in `codec`.
+pub(crate) fn local_track(
+    device_id: &str,
+    name: &str,
+    kind: RtpCodecKind,
+    codec: RTCRtpCodec,
+) -> Result<Arc<TrackLocalStaticSample>> {
+    let encoding = RTCRtpEncodingParameters {
+        rtp_coding_parameters: RTCRtpCodingParameters { ssrc: Some(rand_ssrc()), ..Default::default() },
+        codec,
+        ..Default::default()
+    };
+    let track =
+        MediaStreamTrack::new(format!("nestor-{device_id}"), name.to_owned(), name.to_owned(), kind, vec![encoding]);
+    Ok(Arc::new(TrackLocalStaticSample::new(Instant::now(), track)?))
+}
+
+pub(crate) struct Signals {
+    pub(crate) gathered: Arc<Notify>,
+    pub(crate) state: watch::Receiver<RTCPeerConnectionState>,
+    pub(crate) tracks: mpsc::UnboundedReceiver<Arc<dyn TrackRemote>>,
 }
 
 /// The peer connection's callbacks, turned into channels the connection loop selects on.
-struct Events {
+pub(crate) struct Events {
     gathered: Arc<Notify>,
     state: watch::Sender<RTCPeerConnectionState>,
     tracks: mpsc::UnboundedSender<Arc<dyn TrackRemote>>,
 }
 
 impl Events {
-    fn new() -> (Arc<Self>, Signals) {
+    pub(crate) fn new() -> (Arc<Self>, Signals) {
         let gathered = Arc::new(Notify::new());
         let (state, state_rx) = watch::channel(RTCPeerConnectionState::New);
         let (tracks, tracks_rx) = mpsc::unbounded_channel();
@@ -313,14 +388,14 @@ async fn send_silence(track: Arc<TrackLocalStaticSample>, sender: Arc<dyn RtpSen
     media::send(Arc::new(Mutex::new(source)), track, sender).await
 }
 
-async fn log_end(what: &'static str, work: impl Future<Output = Result<()>>) {
+pub(crate) async fn log_end(what: &'static str, work: impl Future<Output = Result<()>>) {
     if let Err(error) = work.await {
         warn!(%error, "{what} stopped");
     }
 }
 
-fn opus_codec() -> rtc::rtp_transceiver::rtp_sender::RTCRtpCodec {
-    rtc::rtp_transceiver::rtp_sender::RTCRtpCodec {
+pub(crate) fn opus_codec() -> RTCRtpCodec {
+    RTCRtpCodec {
         mime_type: rtc::peer_connection::configuration::media_engine::MIME_TYPE_OPUS.to_owned(),
         clock_rate: 48_000,
         channels: 2,

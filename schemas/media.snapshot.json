@@ -1,0 +1,48 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://nestorhome.dev/schemas/satellite/1/media.snapshot.json",
+  "title": "The still picture asked by the intent `of`: a JPEG, in base64 (needs `video.capture`).",
+  "x-protocol": "nestor.satellite/1",
+  "x-direction": "to_core",
+  "type": "object",
+  "properties": {
+    "type": {
+      "const": "media.snapshot"
+    },
+    "id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 64
+    },
+    "at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "payload": {
+      "type": "object",
+      "properties": {
+        "of": {
+          "type": "string"
+        },
+        "jpeg": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 4000000,
+          "pattern": "^[A-Za-z0-9+/]+={0,2}$"
+        }
+      },
+      "required": [
+        "of",
+        "jpeg"
+      ],
+      "additionalProperties": false
+    }
+  },
+  "required": [
+    "type",
+    "id",
+    "at",
+    "payload"
+  ],
+  "additionalProperties": false
+}

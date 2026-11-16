@@ -1,5 +1,6 @@
 //! What the satellite does with each message from the core: hand intents to the body or the text
-//! display and acknowledge them, take note of the welcome.
+//! display and acknowledge them, hand updates and media sessions to the link, take note of the
+//! welcome.
 //!
 //! It knows nothing of the transport: a driver with a link of its own can reuse it.
 
@@ -9,7 +10,7 @@ use tracing::{debug, warn};
 
 use crate::body::Body;
 use crate::text::TextDisplay;
-use crate::wire::{self, Intent, Message, Welcome};
+use crate::wire::{self, Intent, MediaIntent, Message, Welcome};
 
 /// What the connection has to do after a message.
 #[derive(Debug, Clone, PartialEq)]
@@ -26,6 +27,16 @@ pub enum Outcome {
         reply: String,
         /// The version asked for.
         version: String,
+    },
+    /// Send this reply (the `ack`), and open or end a media session, or take a still picture, as
+    /// the rules of sessions allow.
+    Media {
+        /// The `ack`, as JSON text.
+        reply: String,
+        /// The intent's id (a still picture refers to it).
+        of: String,
+        /// What is asked.
+        media: MediaIntent,
     },
 }
 
@@ -67,6 +78,9 @@ impl Dispatcher {
             Message::Intent(Intent::Update { version }) => {
                 Outcome::Update { reply: wire::ack(&received.id).to_string(), version }
             }
+            Message::Intent(Intent::Media(media)) => {
+                Outcome::Media { reply: wire::ack(&received.id).to_string(), of: received.id, media }
+            }
             Message::Intent(intent) => {
                 match intent {
                     Intent::Behavior(behavior) => self.body.behavior(behavior),
@@ -77,7 +91,7 @@ impl Dispatcher {
                         Some(display) => display.show_text(&text, last),
                         None => debug!("intent.text without a text display: not shown"),
                     },
-                    Intent::Update { .. } => {} // handled above: the link installs it
+                    Intent::Update { .. } | Intent::Media(_) => {} // handled above: the link carries them out
                 }
                 Outcome::Reply(wire::ack(&received.id).to_string())
             }
@@ -185,6 +199,18 @@ mod tests {
             panic!("not handed to the link");
         };
         assert_eq!(version, "0.6.0");
+        assert_eq!(acked(Outcome::Reply(reply))["payload"], json!({"of": "intent-7"}));
+        assert_eq!(body.calls(), ["heartbeat"]);
+    }
+
+    #[test]
+    fn a_media_intent_is_acknowledged_and_handed_to_the_link_with_its_id() {
+        let (body, dispatcher) = setup();
+        let Outcome::Media { reply, of, media } = dispatcher.handle(&message("intent.media.snapshot", json!({})))
+        else {
+            panic!("not handed to the link");
+        };
+        assert_eq!((of.as_str(), media), ("intent-7", MediaIntent::Snapshot));
         assert_eq!(acked(Outcome::Reply(reply))["payload"], json!({"of": "intent-7"}));
         assert_eq!(body.calls(), ["heartbeat"]);
     }

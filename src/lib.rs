@@ -18,13 +18,16 @@
 //! # }
 //! ```
 //!
-//! Features: `voice` (WebRTC audio with your own [`AudioSource`]/[`AudioSink`]), `audio` (the
-//! machine's microphone and speaker through cpal, with `voice`), `cli` (the `nestor-satellite`
-//! command).
+//! Features: `voice` (WebRTC audio with your own [`AudioSource`]/[`AudioSink`], and calls a person
+//! opens through the device), `audio` (the machine's microphone and speaker through cpal, with
+//! `voice`), `video` (a [`camera::Camera`] filmed in the sessions a person opens, and still pictures),
+//! `cli` (the `nestor-satellite` command).
 
 #[cfg(feature = "voice")]
 pub mod audio;
 pub mod body;
+#[cfg(feature = "video")]
+pub mod camera;
 mod client;
 pub mod codes;
 #[cfg(feature = "audio")]
@@ -37,9 +40,14 @@ mod media;
 pub mod pairing;
 pub mod protocol;
 #[cfg(feature = "voice")]
+mod session;
+mod sessions;
+#[cfg(feature = "voice")]
 mod speech;
 pub mod text;
 pub mod update;
+#[cfg(feature = "video")]
+mod video;
 #[cfg(feature = "voice")]
 mod voice;
 #[cfg(not(feature = "voice"))]
@@ -57,8 +65,9 @@ pub use i18n::Language;
 pub use pairing::{Display, Enroller, TokenStore, Voice};
 pub use protocol::{
     AUDIO_CAPTURE, AUDIO_PLAYBACK, Behavior, Capability, Device, EXPRESSION, EnrollmentMethod, Expression, HEAD_MOTION,
-    IDENTIFY, Manifest, PERSON_DETECTION, PROTOCOL, PairingMethod, ProtocolError, SPEECH_ACTIVITY, Software,
-    TEXT_DISPLAY, TEXT_INPUT, UPDATE,
+    IDENTIFY, MEDIA_INDICATOR, Manifest, PERSON_DETECTION, PROTOCOL, PairingMethod, ProtocolError, SPEECH_ACTIVITY,
+    Software, TEXT_DISPLAY, TEXT_INPUT, UPDATE, VIDEO_CAPTURE,
 };
+pub use sessions::MediaIndicator;
 pub use text::TextDisplay;
 pub use update::{Restart, UpdateError, Updater};
