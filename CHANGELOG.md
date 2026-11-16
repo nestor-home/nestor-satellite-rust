@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.7.0](https://github.com/nestor-home/nestor-satellite-rust/compare/v0.6.0...v0.7.0) (2026-11-16)
+
+
+### Features
+
+* film and take calls in sessions the core opens ([#43](https://github.com/nestor-home/nestor-satellite-rust/issues/43)) ([60cb5a5](https://github.com/nestor-home/nestor-satellite-rust/commit/60cb5a516b3ba396f602eaef4b5e73f570027053))
+
 ## [0.6.0](https://github.com/nestor-home/nestor-satellite-rust/compare/v0.5.2...v0.6.0) (2026-11-04)
 
 
