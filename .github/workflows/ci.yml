@@ -9,14 +9,25 @@ on:
 
 env:
   CARGO_TERM_COLOR: always
+  # No debug info: a smaller target to cache and restore, and faster links.
+  CARGO_PROFILE_DEV_DEBUG: 0
+  CARGO_PROFILE_TEST_DEBUG: 0
+
+# A new commit on a pull request makes its earlier run moot: it is cancelled. Runs on main always finish.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   check:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
-      # ALSA for cpal (feature `audio`); libopus is built from source with cmake (preinstalled).
-      - run: sudo apt-get update && sudo apt-get install -y libasound2-dev pkg-config
+      # ALSA for cpal (feature `audio`), restored from the cache rather than through apt and dpkg;
+      # libopus is built from source with cmake (preinstalled).
+      - uses: awalsh128/cache-apt-pkgs-action@v1.6.3
+        with:
+          packages: libasound2-dev pkg-config
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt, clippy
@@ -33,22 +44,29 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
-      - run: sudo apt-get update && sudo apt-get install -y libasound2-dev pkg-config
+      - uses: awalsh128/cache-apt-pkgs-action@v1.6.3
+        with:
+          packages: libasound2-dev pkg-config
       - uses: dtolnay/rust-toolchain@1.91
       - uses: Swatinem/rust-cache@v2
       - run: cargo check --all-targets --all-features
 
   conformance:
     # The published server's black-box suite (`nestor satellites conformance`, version in
-    # .nestor-version) against the binary, as a speaker and as a text satellite.
+    # .nestor-version) against the binary, as a speaker, as a camera and as a text satellite. The
+    # three runs mostly wait on the suite's timers, so they run side by side.
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
       - uses: astral-sh/setup-uv@v10.3.3
-      - run: sudo apt-get update && sudo apt-get install -y libasound2-dev pkg-config
+        with:
+          cache-dependency-glob: .nestor-version
+      - uses: awalsh128/cache-apt-pkgs-action@v1.6.3
+        with:
+          packages: libasound2-dev pkg-config
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
-      - run: cargo test --all-features --test conformance -- --nocapture --test-threads=1
+      - run: cargo test --all-features --test conformance -- --nocapture
         env:
           NESTOR_CONFORMANCE: required
 
