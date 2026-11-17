@@ -118,6 +118,10 @@ cargo clippy --all-targets -- -D warnings && cargo test   # without voice
 The tests run the published server's black-box conformance suite against the `nestor-satellite`
 binary when `uvx` is on the PATH (server version in `.nestor-version`); see [AGENTS.md](AGENTS.md).
 
+A pre-push hook checks the format of the pushed files and runs clippy (`lefthook.yml`). Install
+[lefthook](https://lefthook.dev) (`brew install lefthook` or `npm i -g lefthook`), then run
+`lefthook install` once in the clone.
+
 ## Releases
 
 release-please (`release.yml`) opens the release pull request; merging it tags `vX.Y.Z`, creates

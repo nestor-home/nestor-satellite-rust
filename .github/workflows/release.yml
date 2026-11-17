@@ -21,6 +21,7 @@ jobs:
     needs: release
     if: needs.release.outputs.release_created == 'true'
     runs-on: ubuntu-latest
+    timeout-minutes: 4
     environment: crates-io
     permissions:
       contents: read

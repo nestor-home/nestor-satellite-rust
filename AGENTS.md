@@ -12,7 +12,8 @@ cargo test --all-features
 cargo clippy --all-targets -- -D warnings && cargo test   # without `voice`: no WebRTC
 ```
 
-All must pass; CI runs them on stable Rust, checks that the default build has no webrtc, checks the
+`lefthook.yml` runs the format check on the pushed files and the first clippy before each push
+(`lefthook install` once). All must pass; CI runs them on stable Rust, checks that the default build has no webrtc, checks the
 MSRV (1.91: webrtc-rs needs it) and
 runs `cargo audit` (also weekly; clean as of 31/10/2026, no ignored advisory: an advisory that cannot
 be fixed goes in `.cargo/audit.toml` with its reason). Building needs a C compiler and `cmake` (libopus is bundled), and on Linux ALSA

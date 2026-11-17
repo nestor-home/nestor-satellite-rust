@@ -1,0 +1,10 @@
+# Checks before each push, on the pushed Rust files (https://lefthook.dev). Install: see the README.
+pre-push:
+  parallel: true
+  commands:
+    format:
+      glob: "*.rs"
+      run: rustfmt --check --edition 2024 {push_files}
+    clippy:
+      glob: "*.rs"
+      run: cargo clippy --all-targets --all-features -- -D warnings
