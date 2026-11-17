@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.7.1](https://github.com/nestor-home/nestor-satellite-rust/compare/v0.7.0...v0.7.1) (2026-11-17)
+
+
+### Bug Fixes
+
+* **deps:** update rust crate base64 to 0.23.0 ([#49](https://github.com/nestor-home/nestor-satellite-rust/issues/49)) ([eb6c4ed](https://github.com/nestor-home/nestor-satellite-rust/commit/eb6c4ed94f48e1705b0c3f7aef09ce7d1933c70c))
+
 ## [0.7.0](https://github.com/nestor-home/nestor-satellite-rust/compare/v0.6.0...v0.7.0) (2026-11-16)
 
 
