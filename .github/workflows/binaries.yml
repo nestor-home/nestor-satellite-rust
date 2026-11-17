@@ -2,7 +2,7 @@
 #
 # dist always writes it as release.yml, which release-please and crates.io own here: after
 # `dist generate`, move it to binaries.yml, restore release.yml and rename the workflow to
-# "Binaries". The tag and the GitHub Release come from release-please (release.yml); this workflow
+# "Binaries", and put back the `timeout-minutes` of each job. The tag and the GitHub Release come from release-please (release.yml); this workflow
 # runs on that tag push and attaches the binaries and the installer to the existing release.
 #
 # Copyright 2022-2024, axodotdev
@@ -53,6 +53,7 @@ jobs:
   # Run 'dist plan' (or host) to determine what tasks we need to do
   plan:
     runs-on: "ubuntu-26.04"
+    timeout-minutes: 2
     outputs:
       val: ${{ steps.plan.outputs.manifest }}
       tag: ${{ !github.event.pull_request && github.ref_name || '' }}
@@ -113,6 +114,8 @@ jobs:
       # - N "local" tasks that build each platform's binaries and platform-specific installers
       matrix: ${{ fromJson(needs.plan.outputs.val).ci.github.artifacts_matrix }}
     runs-on: ${{ matrix.runner }}
+    # A cold macOS build takes up to 15 minutes.
+    timeout-minutes: 31
     container: ${{ matrix.container && matrix.container.image || null }}
     env:
       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -176,6 +179,7 @@ jobs:
       - plan
       - build-local-artifacts
     runs-on: "ubuntu-26.04"
+    timeout-minutes: 2
     env:
       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       BUILD_MANIFEST_NAME: target/distrib/global-dist-manifest.json
@@ -227,6 +231,7 @@ jobs:
     env:
       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
     runs-on: "ubuntu-26.04"
+    timeout-minutes: 2
     outputs:
       val: ${{ steps.host.outputs.manifest }}
     steps:
@@ -290,6 +295,7 @@ jobs:
     # "host" however must run to completion, no skipping allowed!
     if: ${{ always() && needs.host.result == 'success' }}
     runs-on: "ubuntu-26.04"
+    timeout-minutes: 2
     env:
       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
     steps:
