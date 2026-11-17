@@ -3645,15 +3645,15 @@ checksum = "0b928f33d975fc6ad9f86c8f283853ad26bdd5b10b7f1542aa2fa15e2289105a"
 
 [[package]]
 name = "vp8-decoder"
-version = "0.1.1"
+version = "0.1.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5e0950d7ffa096605272fd9285825cfd82b32cd72c713eb26887217fa9afd8e0"
+checksum = "e75d02b41ef642b8fb67d0ea86ce2b5555f1b94bf5d664df9b03adee9cae1ed9"
 
 [[package]]
 name = "vp8-encoder"
-version = "0.1.1"
+version = "0.1.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "293585438b38a11edc42d7ea23b2e03b1a96a6818d86b0dc373feb083071d424"
+checksum = "9e03cf834925b0b2b494ddbc1f08433ca47f6b84cada4061b7017e5db2a13149"
 dependencies = [
  "vp8-decoder",
 ]
